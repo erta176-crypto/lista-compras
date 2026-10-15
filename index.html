@@ -40,10 +40,11 @@ input,select{font-size:16px}/* ≥16px evita o zoom automático do Safari */
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 
 /* ---------- Cabeçalho ---------- */
-header{position:sticky;top:0;z-index:20;background:linear-gradient(135deg,var(--head-a),var(--head-b));color:#fff;
+header{position:fixed;top:0;left:0;right:0;z-index:20;transition:transform .22s ease;will-change:transform;background:linear-gradient(135deg,var(--head-a),var(--head-b));color:#fff;
   padding:calc(10px + var(--safe-t)) 12px 10px;box-shadow:0 2px 12px #0003}
-.titlebar{display:flex;align-items:center;justify-content:space-between;gap:8px;max-height:44px;overflow:hidden;transition:max-height .2s,opacity .2s,margin .2s;margin-bottom:8px}
-header.compact .titlebar{max-height:0;opacity:0;margin-bottom:0}
+.titlebar{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;transition:opacity .18s;margin-bottom:8px}
+header.compact{transform:translateY(calc(-1 * var(--tb,52px)))}
+header.compact .titlebar{opacity:0;pointer-events:none}
 h1{font-size:20px;margin:0;font-weight:800;letter-spacing:-.2px}
 .seg{display:inline-flex;background:#ffffff26;border-radius:999px;padding:3px}
 .seg button{border:0;background:transparent;color:#fff;font-weight:700;font-size:14px;padding:7px 14px;border-radius:999px;min-height:36px}
@@ -62,7 +63,7 @@ h1{font-size:20px;margin:0;font-weight:800;letter-spacing:-.2px}
 .spill .dot{width:10px;height:10px;border-radius:50%;flex:none;box-shadow:0 0 0 1px #0002}
 
 /* ---------- Conteúdo ---------- */
-main{max-width:760px;margin:0 auto;padding:12px 10px calc(96px + var(--safe-b))}
+main{max-width:760px;margin:0 auto;padding:calc(var(--hfull,150px) + 12px) 10px calc(96px + var(--safe-b))}
 .banner{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--brand-soft);color:var(--brand-ink);border-radius:14px;padding:10px 12px;margin-bottom:10px;font-size:14px;font-weight:600}
 .banner button{border:0;border-radius:10px;padding:8px 12px;background:var(--brand);color:#fff;font-weight:700;min-height:40px}
 @media (prefers-color-scheme:dark){.banner button{color:#0f1115}}
@@ -115,8 +116,13 @@ main{max-width:760px;margin:0 auto;padding:12px 10px calc(96px + var(--safe-b))}
 .newcat{width:100%;margin-top:4px}
 
 /* Linha – modo Comprar */
-.buy{display:grid;grid-template-columns:30px 1fr auto;align-items:center;gap:12px;width:100%;border:0;border-bottom:1px solid var(--line-2);background:transparent;text-align:left;padding:12px 14px;min-height:60px}
-.buy:last-child{border-bottom:0}
+.swipe{position:relative;overflow:hidden;border-bottom:1px solid var(--line-2);touch-action:pan-y}
+.swipe:last-child{border-bottom:0}
+.swbg{position:absolute;inset:0;display:flex;align-items:center;justify-content:space-between;padding:0 22px;font-weight:800;font-size:15px;color:#fff;background:var(--ok);opacity:0}
+.swbg.undo{background:#6b7280}
+.swbg.arm{filter:brightness(1.12)}
+.swipe.moving .swbg{opacity:1}
+.buy{position:relative;display:grid;grid-template-columns:30px 1fr auto;align-items:center;gap:12px;width:100%;border:0;background:var(--card);text-align:left;padding:12px 14px;min-height:60px}
 .buy .tick{width:28px;height:28px;border-radius:50%;border:2px solid var(--mut);display:grid;place-items:center;font-size:16px;color:transparent;transition:background .15s,border-color .15s}
 .buy .bname{font-size:18px;font-weight:600;overflow-wrap:anywhere}
 .buy .meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
@@ -127,6 +133,8 @@ main{max-width:760px;margin:0 auto;padding:12px 10px calc(96px + var(--safe-b))}
 .buy.done .tick{background:var(--ok);border-color:var(--ok);color:#fff}
 @media (prefers-color-scheme:dark){.buy.done .tick{color:#0f1115}}
 .buy:active{background:var(--card-2)}
+.buy.anim{transition:transform .2s ease}
+.swipe-hint{font-size:13px;color:var(--mut);text-align:center;margin:-2px 0 10px}
 .sep{font-size:12px;font-weight:700;color:var(--mut);padding:8px 14px 6px;background:var(--card-2);text-transform:uppercase;letter-spacing:.4px}
 
 .empty{padding:36px 18px;text-align:center;color:var(--mut)}
@@ -380,7 +388,7 @@ function rerenderCategory(sec){
   if(old&&box)old.replaceWith(box);else render();
   updateStatus();updateStoreBar();
 }
-function scrollIntoViewIfHidden(el){const r=el.getBoundingClientRect(),hh=$('#hdr').offsetHeight;if(r.top<hh)window.scrollBy({top:r.top-hh-4})}
+function scrollIntoViewIfHidden(el){const r=el.getBoundingClientRect(),hh=$('#hdr').getBoundingClientRect().bottom;if(r.top<hh)window.scrollBy({top:r.top-hh-4})}
 
 function planRow(sec,n){
   const s=get(sec.category,n);
@@ -406,13 +414,47 @@ function planRow(sec,n){
 }
 function buyRow(sec,n){
   const s=get(sec.category,n);
+  const wrap=document.createElement('div');wrap.className='swipe';
+  const lbl=s.done?'↩ Desmarcar':'✓ No carrinho';
+  wrap.innerHTML=`<div class="swbg${s.done?' undo':''}" aria-hidden="true"><span>${lbl}</span><span>${lbl}</span></div>`;
   const b=document.createElement('button');
   b.className='buy'+(s.done?' done':'');
   b.setAttribute('aria-pressed',String(s.done));
   b.innerHTML=`<span class="tick" aria-hidden="true">✓</span><span class="bname">${esc(n)}</span><span class="meta"><span class="qtyb">${esc(s.qty)}</span>${chipHTML(s.store)}</span>`;
-  b.onclick=()=>{const d=!get(sec.category,n).done;setItem(sec.category,n,{done:d});vibrate(d?15:8);rerenderCategory(sec);
+  const toggle=()=>{const d=!get(sec.category,n).done;setItem(sec.category,n,{done:d});vibrate(d?15:8);rerenderCategory(sec);
     if(d&&allDone())toast('Compra concluída! 🎉')};
-  return b;
+  let suppressClick=false;
+  b.onclick=()=>{if(suppressClick){suppressClick=false;return}toggle()};
+  attachSwipe(wrap,b,toggle,()=>{suppressClick=true});
+  wrap.appendChild(b);
+  return wrap;
+}
+/* Gesto horizontal: desliza para qualquer lado para pôr/tirar do carrinho.
+   O scroll vertical continua nativo (touch-action: pan-y). */
+function attachSwipe(wrap,el,onDone,onSwiped){
+  const bg=wrap.querySelector('.swbg');
+  let x0=0,y0=0,dx=0,mode=null,armed=false,pid=null;
+  el.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'&&e.button!==0)return;x0=e.clientX;y0=e.clientY;dx=0;mode=null;armed=false;pid=e.pointerId;el.classList.remove('anim')});
+  el.addEventListener('pointermove',e=>{
+    if(e.pointerId!==pid)return;
+    const mx=e.clientX-x0,my=e.clientY-y0;
+    if(!mode){if(Math.abs(mx)>10&&Math.abs(mx)>Math.abs(my)*1.4){mode='h';wrap.classList.add('moving');try{el.setPointerCapture(pid)}catch(_){}}else if(Math.abs(my)>10){mode='v';return}else return}
+    if(mode!=='h')return;
+    dx=mx;el.style.transform=`translateX(${dx}px)`;
+    const th=Math.min(110,wrap.offsetWidth*0.3),a=Math.abs(dx)>th;
+    if(a!==armed){armed=a;bg.classList.toggle('arm',a);if(a)vibrate(8)}
+  });
+  const end=e=>{
+    if(e.pointerId!==pid)return;pid=null;
+    if(mode!=='h'){mode=null;return}
+    onSwiped();
+    el.classList.add('anim');
+    if(armed){el.style.transform=`translateX(${dx>0?'110%':'-110%'})`;setTimeout(onDone,180)}
+    else{el.style.transform='';setTimeout(()=>wrap.classList.remove('moving'),200)}
+    mode=null;
+  };
+  el.addEventListener('pointerup',end);
+  el.addEventListener('pointercancel',e=>{if(e.pointerId!==pid)return;pid=null;el.classList.add('anim');el.style.transform='';setTimeout(()=>wrap.classList.remove('moving'),200);mode=null});
 }
 function updateCatHead(sec){
   const box=document.querySelector(`section.category[data-cat="${CSS.escape(sec.category)}"]`);if(!box)return;
@@ -448,6 +490,9 @@ function renderBanner(){
   if(editing){
     el.innerHTML=`<div class="banner"><span>✏️ A editar. Toca num nome para o renomear.</span><button>Concluir</button></div>`;
     el.querySelector('button').onclick=()=>{editing=false;render()};
+  }else if(prefs.mode==='shop'&&!prefs.swipeHintSeen&&compraCount().tot){
+    el.innerHTML='<p class="swipe-hint">Dica: toca ou desliza um artigo para o pôr no carrinho.</p>';
+    prefs.swipeHintSeen=true;savePrefs();
   }else if(filter!=='all'||storeFilter){
     const lbl={in:'Só os da compra',out:'Só os fora da compra',todo:'Só por comprar',done:'Só no carrinho'}[filter];
     const parts=[lbl,storeFilter?(storeFilter==='__none__'?'Sem supermercado':storeFilter):''].filter(Boolean).join(' · ');
@@ -754,7 +799,7 @@ function vibrate(ms){try{navigator.vibrate&&navigator.vibrate(ms)}catch(_){}}
 /* =========================================================
    Ligações de eventos e arranque
    ========================================================= */
-const APP_VERSION='2.0.1';
+const APP_VERSION='2.0.2';
 $('#search').addEventListener('input',()=>render());
 $('#search').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#search').blur()}});
 $('#menuBtn').onclick=openMenu;
@@ -771,11 +816,33 @@ $('#collapseBtn').onclick=()=>{
 
 /* Cabeçalho compacto ao fazer scroll + altura para os títulos fixos das categorias */
 const hdr=$('#hdr');
-let lastY=0;
-window.addEventListener('scroll',()=>{const y=window.scrollY;if(y>60&&y>lastY)hdr.classList.add('compact');else if(y<lastY-10||y<20)hdr.classList.remove('compact');lastY=y},{passive:true});
-const setHH=()=>document.documentElement.style.setProperty('--hh',hdr.offsetHeight+'px');
-if('ResizeObserver' in window)new ResizeObserver(setHH).observe(hdr);else window.addEventListener('resize',setHH);
-setHH();
+/* O cabeçalho é fixo e só desliza (transform): a página nunca muda de altura, por isso não há saltos.
+   Histerese: esconde depois de descer 12px e só reaparece depois de subir 28px. */
+let lastY=window.scrollY,acc=0,ticking=false,tbH=52,fullH=150;
+function setCompact(c){
+  if(hdr.classList.contains('compact')===c)return;
+  hdr.classList.toggle('compact',c);
+  document.documentElement.style.setProperty('--hh',(c?fullH-tbH:fullH)+'px');
+}
+function onScroll(){
+  ticking=false;
+  const y=Math.max(0,window.scrollY),dy=y-lastY;lastY=y;
+  if(y<40){acc=0;setCompact(false);return}
+  if(document.body.style.overflow==='hidden')return;
+  acc=(dy>0)===(acc>0)?acc+dy:dy;
+  if(acc>12)setCompact(true);else if(acc<-28)setCompact(false);
+}
+window.addEventListener('scroll',()=>{if(!ticking){ticking=true;requestAnimationFrame(onScroll)}},{passive:true});
+function measureHeader(){
+  const tb=hdr.querySelector('.titlebar');
+  tbH=tb.offsetHeight+parseFloat(getComputedStyle(tb).marginBottom||0);
+  fullH=hdr.offsetHeight;
+  const r=document.documentElement.style;
+  r.setProperty('--tb',tbH+'px');r.setProperty('--hfull',fullH+'px');
+  r.setProperty('--hh',(hdr.classList.contains('compact')?fullH-tbH:fullH)+'px');
+}
+if('ResizeObserver' in window)new ResizeObserver(measureHeader).observe(hdr);else window.addEventListener('resize',measureHeader);
+measureHeader();
 
 /* Lembrete de cópia de segurança (30 dias) */
 function backupReminder(){
