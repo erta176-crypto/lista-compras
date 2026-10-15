@@ -348,11 +348,11 @@ function renderCategory(sec){
   if(closed)box.classList.add('closed');
   const p=catProgress(sec);
   let countTxt,countCls='count';
-  if(prefs.mode==='shop'){countTxt=`${p.done}/${p.tot}`;countCls+=' has';if(p.tot&&p.done===p.tot)countCls+=' full'}
-  else if(p.tot){countTxt=`🛒 ${p.tot}`;countCls+=' has'}
+  if(prefs.mode==='shop'){countTxt=`${p.done} de ${p.tot}`;countCls+=' has';if(p.tot&&p.done===p.tot)countCls+=' full'}
+  else if(p.tot){countTxt=`${p.tot} de ${sec.items.length}`;countCls+=' has'}
   else countTxt=`${sec.items.length}`;
   const pct=prefs.mode==='shop'&&p.tot?Math.round(p.done/p.tot*100):0;
-  box.innerHTML=`<button class="cathead" aria-expanded="${!closed}"><span class="ico" aria-hidden="true">${catIcon(sec.category)}</span><span class="cname">${esc(sec.category)}</span><span class="${countCls}" aria-label="${prefs.mode==='shop'?`${p.done} de ${p.tot} no carrinho`:p.tot?`${p.tot} na compra`:`${sec.items.length} artigos`}">${countTxt}</span><span class="chev" aria-hidden="true">▾</span><span class="bar"><i style="width:${pct}%"></i></span></button>`
+  box.innerHTML=`<button class="cathead" aria-expanded="${!closed}"><span class="ico" aria-hidden="true">${catIcon(sec.category)}</span><span class="cname">${esc(sec.category)}</span><span class="${countCls}" aria-label="${prefs.mode==='shop'?`${p.done} de ${p.tot} no carrinho`:p.tot?`${p.tot} de ${sec.items.length} na compra`:`${sec.items.length} artigos`}">${countTxt}</span><span class="chev" aria-hidden="true">▾</span><span class="bar"><i style="width:${pct}%"></i></span></button>`
   +`<div class="editbar"><input class="addname" placeholder="Novo artigo em ${esc(sec.category)}" enterkeyhint="done" maxlength="80"><button class="btn primary addbtn">Adicionar</button><button class="btn renc">Renomear</button><button class="btn danger delc">Apagar</button></div>`
   +`<div class="items"></div>`;
   const head=box.querySelector('.cathead');
@@ -391,10 +391,11 @@ function planRow(sec,n){
   row.innerHTML=`<div class="r1">${nameEl}<div class="stepper"><button class="minus" aria-label="Menos ${esc(n)}">−</button><input class="qty" inputmode="decimal" placeholder="Qtd." value="${esc(s.qty)}" aria-label="Quantidade de ${esc(n)}" maxlength="20"><button class="plus" aria-label="Mais ${esc(n)}">+</button></div><button class="delbtn" aria-label="Apagar ${esc(n)}">×</button></div>`
   +`<div class="r2"><span class="dot" style="background:${bg}"></span><input class="store" list="stores" placeholder="Supermercado (opcional)" value="${esc(s.store)}" aria-label="Supermercado para ${esc(n)}" maxlength="40" enterkeyhint="done"></div>`;
   const qty=row.querySelector('.qty'),store=row.querySelector('.store'),dot=row.querySelector('.dot');
-  const sync=()=>{const st=get(sec.category,n);row.classList.toggle('incompra',inCompra(st));qty.value=st.qty;updateCatHead(sec)};
+  const sync=()=>{const st=get(sec.category,n);row.classList.toggle('incompra',inCompra(st));qty.value=st.qty;updateCatHead(sec);updateStoreBar()};
   row.querySelector('.plus').onclick=()=>{const was=inCompra(get(sec.category,n));setItem(sec.category,n,{qty:stepQty(get(sec.category,n).qty,1)});sync();if(!was)vibrate(10)};
   row.querySelector('.minus').onclick=()=>{setItem(sec.category,n,{qty:stepQty(get(sec.category,n).qty,-1)});sync()};
   qty.oninput=()=>{setItem(sec.category,n,{qty:qty.value});row.classList.toggle('incompra',inCompra(get(sec.category,n)));updateCatHead(sec)};
+  qty.onchange=()=>updateStoreBar();
   qty.onkeydown=e=>{if(e.key==='Enter')qty.blur()};
   store.oninput=()=>{setItem(sec.category,n,{store:store.value.trim()});dot.style.background=store.value.trim()?storeColor(store.value.trim())[0]:'var(--line)'};
   store.onchange=()=>{updateStoreBar();updateDatalist()};
@@ -416,9 +417,10 @@ function buyRow(sec,n){
 function updateCatHead(sec){
   const box=document.querySelector(`section.category[data-cat="${CSS.escape(sec.category)}"]`);if(!box)return;
   const p=catProgress(sec),c=box.querySelector('.count'),bar=box.querySelector('.bar i');
-  if(prefs.mode==='shop'){c.textContent=`${p.done}/${p.tot}`;c.className='count has'+(p.tot&&p.done===p.tot?' full':'')}
-  else if(p.tot){c.textContent=`🛒 ${p.tot}`;c.className='count has'}
+  if(prefs.mode==='shop'){c.textContent=`${p.done} de ${p.tot}`;c.className='count has'+(p.tot&&p.done===p.tot?' full':'')}
+  else if(p.tot){c.textContent=`${p.tot} de ${sec.items.length}`;c.className='count has'}
   else{c.textContent=String(sec.items.length);c.className='count'}
+  c.setAttribute('aria-label',prefs.mode==='shop'?`${p.done} de ${p.tot} no carrinho`:p.tot?`${p.tot} de ${sec.items.length} na compra`:`${sec.items.length} artigos`);
   bar.style.width=(prefs.mode==='shop'&&p.tot?Math.round(p.done/p.tot*100):0)+'%';
 }
 function emptyState(){
@@ -455,7 +457,7 @@ function renderBanner(){
 }
 function updateStoreBar(){
   const bar=$('#storebar');
-  const pool=Object.entries(state).filter(([,s])=>prefs.mode==='plan'||inCompra(s));
+  const pool=Object.entries(state).filter(([,s])=>inCompra(s));
   const stores=[...new Set(pool.map(([,s])=>s.store).filter(Boolean))].sort(cmp);
   const noneCount=prefs.mode==='shop'?pool.filter(([,s])=>!s.store).length:0;
   if(storeFilter&&storeFilter!=='__none__'&&!stores.includes(storeFilter))storeFilter='';
@@ -752,7 +754,7 @@ function vibrate(ms){try{navigator.vibrate&&navigator.vibrate(ms)}catch(_){}}
 /* =========================================================
    Ligações de eventos e arranque
    ========================================================= */
-const APP_VERSION='2.0.0';
+const APP_VERSION='2.0.1';
 $('#search').addEventListener('input',()=>render());
 $('#search').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#search').blur()}});
 $('#menuBtn').onclick=openMenu;
