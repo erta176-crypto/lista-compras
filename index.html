@@ -211,7 +211,7 @@ footer{position:fixed;bottom:0;left:0;right:0;z-index:15;background:var(--card);
 </footer>
 <div id="toasts" class="toasts" aria-live="polite"></div>
 <datalist id="stores"></datalist>
-<input id="importFile" type="file" accept="application/json,.json,text/csv,.csv" hidden>
+<input id="importFile" type="file" accept="application/json,.json,text/csv,.csv,text/plain,.txt" hidden>
 <script>
 'use strict';
 /* =========================================================
@@ -636,20 +636,68 @@ async function share(){
     catch(_){location.href='sms:?&body='+encodeURIComponent(text)}
   }
 }
+function markBackup(){prefs.lastBackup=Date.now();prefs.backupSnooze=0;savePrefs()}
 function download(blob,name){
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.rel='noopener';
   document.body.appendChild(a);a.click();
   setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},4000); // o Safari precisa de tempo antes de revogar
-  prefs.lastBackup=Date.now();prefs.backupSnooze=0;savePrefs();
 }
 const stamp=()=>new Date().toISOString().slice(0,10);
-function exportJSON(){download(new Blob([JSON.stringify({version:1,app:'lista-compras',exported:new Date().toISOString(),catalog:DATA,state},null,2)],{type:'application/json'}),`lista_compras_${stamp()}.json`);toast('Cópia JSON exportada.')}
-function exportCSV(){
+function buildExport(kind){
+  if(kind==='json'){
+    const text=JSON.stringify({version:1,app:'lista-compras',exported:new Date().toISOString(),catalog:DATA,state},null,2);
+    return{text,name:`lista_compras_${stamp()}.json`,type:'application/json',ext:'.json',desc:'Cópia da lista (JSON)',label:'Cópia JSON'};
+  }
   const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
   const rows=[['Categoria','Artigo','Comprado','Quantidade','Supermercado']];
   DATA.forEach(c=>c.items.forEach(n=>{const s=get(c.category,n);rows.push([c.category,n,s.done?'Sim':'Não',s.qty,s.store])}));
-  download(new Blob(['﻿'+rows.map(r=>r.map(q).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'}),`lista_compras_${stamp()}.csv`);toast('Cópia CSV exportada.');
+  return{text:'﻿'+rows.map(r=>r.map(q).join(';')).join('\r\n'),name:`lista_compras_${stamp()}.csv`,type:'text/csv',ext:'.csv',desc:'Folha de cálculo (CSV)',label:'Ficheiro CSV'};
 }
+/* Ficheiro que o menu de partilha do sistema aceita. O Chrome para Android não partilha .json,
+   por isso a cópia segue como .txt (o conteúdo é o mesmo e a importação aceita-o). */
+function shareableFile(ex){
+  if(!navigator.canShare)return null;
+  try{
+    const f=new File([ex.text],ex.name,{type:ex.type});
+    if(navigator.canShare({files:[f]}))return f;
+    const t=new File([ex.text],ex.name.replace(/\.\w+$/,'.txt'),{type:'text/plain'});
+    if(navigator.canShare({files:[t]}))return t;
+  }catch(_){}
+  return null;
+}
+function exportFile(kind){
+  const ex=buildExport(kind);
+  const canPick='showSaveFilePicker' in window;
+  const shareF=shareableFile(ex);
+  openOverlay((sh,ov)=>{
+    sh.insertAdjacentHTML('beforeend',`<h2>Onde queres guardar?</h2>
+<p class="note" style="text-align:left;margin:-4px 0 12px">${esc(ex.label)} · ${esc(ex.name)}</p>
+<div class="grp">
+ ${canPick?'<button class="row" id="xPick"><span class="ri">📁</span>Escolher pasta e nome…</button>':''}
+ ${shareF?'<button class="row" id="xShare"><span class="ri">📤</span>Guardar no Drive, Ficheiros ou enviar…'+(shareF.name!==ex.name?'<span class="rs">como .txt</span>':'')+'</button>':''}
+ <button class="row" id="xDown"><span class="ri">⬇️</span>Pasta Transferências<span class="rs">no dispositivo</span></button>
+</div>
+<div class="actions"><button class="btn ghost" id="xCancel">Cancelar</button></div>`);
+    sh.querySelector('#xCancel').onclick=()=>ov.close();
+    sh.querySelector('#xDown').onclick=()=>{ov.close();download(new Blob([ex.text],{type:ex.type+';charset=utf-8'}),ex.name);markBackup();toast(`${ex.label} guardada em Transferências.`)};
+    if(canPick)sh.querySelector('#xPick').onclick=async()=>{
+      try{
+        const h=await window.showSaveFilePicker({suggestedName:ex.name,types:[{description:ex.desc,accept:{[ex.type]:[ex.ext]}}]});
+        ov.close();
+        const w=await h.createWritable();await w.write(new Blob([ex.text],{type:ex.type}));await w.close();
+        markBackup();toast(`${ex.label} guardada.`);
+      }catch(e){if(e&&e.name==='AbortError')return;ov.close();toast('Não foi possível guardar o ficheiro.')}
+    };
+    if(shareF)sh.querySelector('#xShare').onclick=async()=>{
+      try{
+        await navigator.share({files:[shareF],title:ex.name});
+        ov.close();markBackup();toast(`${ex.label} enviada.`);
+      }catch(e){if(e&&e.name==='AbortError')return;ov.close();toast('Não foi possível abrir o menu de partilha.')}
+    };
+  });
+}
+const exportJSON=()=>exportFile('json');
+const exportCSV=()=>exportFile('csv');
 function parseCSV(text){
   const rows=[];let row=[],cell='',quoted=false;
   for(let i=0;i<text.length;i++){
@@ -778,8 +826,8 @@ function openMenu(){
     sh.querySelector('#mFilter').onchange=e=>{filter=e.target.value;ov.close();render()};
     sh.querySelector('#mEdit').onclick=()=>{ov.close();editing=!editing;if(editing&&prefs.mode!=='plan'){prefs.mode='plan';savePrefs()}filter='all';storeFilter='';$('#search').value='';render();window.scrollTo(0,0)};
     sh.querySelector('#mShare').onclick=()=>{ov.close();share()};
-    sh.querySelector('#mExpJ').onclick=()=>{ov.close();exportJSON()};
-    sh.querySelector('#mExpC').onclick=()=>{ov.close();exportCSV()};
+    sh.querySelector('#mExpJ').onclick=()=>{ov.close();setTimeout(exportJSON,250)};
+    sh.querySelector('#mExpC').onclick=()=>{ov.close();setTimeout(exportCSV,250)};
     sh.querySelector('#mImp').onclick=()=>{ov.close();$('#importFile').click()};
     sh.querySelector('#mNew').onclick=()=>{ov.close();newCompra()};
   });
@@ -799,7 +847,7 @@ function vibrate(ms){try{navigator.vibrate&&navigator.vibrate(ms)}catch(_){}}
 /* =========================================================
    Ligações de eventos e arranque
    ========================================================= */
-const APP_VERSION='2.0.2';
+const APP_VERSION='2.0.3';
 $('#search').addEventListener('input',()=>render());
 $('#search').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#search').blur()}});
 $('#menuBtn').onclick=openMenu;

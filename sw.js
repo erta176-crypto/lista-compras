@@ -1,6 +1,6 @@
 /* Service worker da Lista de Compras.
    Para publicar uma nova versão, aumenta o número em VERSION. */
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = 'lista-compras-' + VERSION;
 const ASSETS = [
   './',
