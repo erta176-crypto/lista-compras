@@ -125,6 +125,18 @@ main{max-width:760px;margin:0 auto;padding:calc(var(--hfull,150px) + 12px) 10px 
 .item.incompra .r2{display:flex}
 .r2 .dot{width:12px;height:12px;border-radius:50%;flex:none;background:var(--line);box-shadow:0 0 0 1px #0001}
 .store{flex:1;min-width:0;height:40px;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+select.store{appearance:auto;color:var(--txt)}
+select.store.empty{color:var(--mut)}
+.srow{display:flex;align-items:center;gap:10px;padding:6px 8px 6px 14px;min-height:52px;border-bottom:1px solid var(--line-2)}
+.srow:last-child{border-bottom:0}
+.srow .dot{width:14px;height:14px;border-radius:50%;flex:none;box-shadow:0 0 0 1px #0002}
+.srow .sn{flex:1;min-width:0;font-size:16px;overflow-wrap:anywhere}
+.srow .sc{font-size:13px;color:var(--mut);white-space:nowrap}
+.srow .ib{flex:none;width:44px;height:44px;border:0;border-radius:10px;background:transparent;font-size:18px}
+.srow .ib:active{background:var(--card-2)}
+.addrow{display:flex;gap:8px;margin-bottom:12px}
+.addrow .field{margin:0;flex:1;min-width:0}
+.sheet .empty-s{padding:16px;text-align:center;color:var(--mut);font-size:14px}
 .delbtn,.renbtn{display:none;flex:none;border:0;border-radius:10px;min-width:44px;height:44px;font-weight:700}
 .delbtn{background:var(--danger-soft);color:var(--danger);font-size:20px}
 .editing .delbtn{display:block}
@@ -236,7 +248,6 @@ footer{position:fixed;bottom:0;left:0;right:0;z-index:15;background:var(--card);
   </div>
 </footer>
 <div id="toasts" class="toasts" aria-live="polite"></div>
-<datalist id="stores"></datalist>
 <input id="importFile" type="file" accept="application/json,.json,text/csv,.csv,text/plain,.txt" hidden>
 <script>
 'use strict';
@@ -425,7 +436,7 @@ function planRow(sec,n){
   const nameEl=`<button class="name" aria-label="Editar ${esc(n)}: nome e categoria">${esc(n)}</button>`;
   const [bg]=s.store?storeColor(s.store):['var(--line)'];
   row.innerHTML=`<div class="r1">${nameEl}<div class="stepper"><button class="minus" aria-label="Menos ${esc(n)}">−</button><input class="qty" inputmode="decimal" placeholder="Qtd." value="${esc(s.qty)}" aria-label="Quantidade de ${esc(n)}" maxlength="20"><button class="plus" aria-label="Mais ${esc(n)}">+</button></div><button class="delbtn" aria-label="Apagar ${esc(n)}">×</button></div>`
-  +`<div class="r2"><span class="dot" style="background:${bg}"></span><input class="store" list="stores" placeholder="Supermercado (opcional)" value="${esc(s.store)}" aria-label="Supermercado para ${esc(n)}" maxlength="40" enterkeyhint="done"></div>`;
+  +`<div class="r2"><span class="dot" style="background:${bg}"></span><select class="store${s.store?'':' empty'}" aria-label="Supermercado para ${esc(n)}">${storeOptions(s.store)}</select></div>`;
   const qty=row.querySelector('.qty'),store=row.querySelector('.store'),dot=row.querySelector('.dot');
   const sync=()=>{const st=get(sec.category,n);row.classList.toggle('incompra',inCompra(st));qty.value=st.qty;updateCatHead(sec);updateStoreBar()};
   row.querySelector('.plus').onclick=()=>{const was=inCompra(get(sec.category,n));setItem(sec.category,n,{qty:stepQty(get(sec.category,n).qty,1)});sync();if(!was)vibrate(10)};
@@ -433,9 +444,17 @@ function planRow(sec,n){
   qty.oninput=()=>{setItem(sec.category,n,{qty:qty.value});row.classList.toggle('incompra',inCompra(get(sec.category,n)));updateCatHead(sec)};
   qty.onchange=()=>updateStoreBar();
   qty.onkeydown=e=>{if(e.key==='Enter')qty.blur()};
-  store.oninput=()=>{setItem(sec.category,n,{store:store.value.trim()});dot.style.background=store.value.trim()?storeColor(store.value.trim())[0]:'var(--line)'};
-  store.onchange=()=>{updateStoreBar();updateDatalist()};
-  store.onkeydown=e=>{if(e.key==='Enter')store.blur()};
+  const applyStore=v=>{setItem(sec.category,n,{store:v});dot.style.background=v?storeColor(v)[0]:'var(--line)';store.classList.toggle('empty',!v);updateStoreBar()};
+  store.onchange=async()=>{
+    if(store.value!=='__add__'){applyStore(store.value);return}
+    const prev=get(sec.category,n).store;
+    store.value=prev;
+    const v=await askText('Novo supermercado','','Nome do supermercado');
+    const name=v==null?null:addStore(v);
+    if(!name)return;
+    document.querySelectorAll('select.store').forEach(sel=>{const cur=sel.value;sel.innerHTML=storeOptions(cur)});
+    store.value=name;applyStore(name);
+  };
   row.querySelector('.delbtn').onclick=()=>deleteItem(sec,n);
   row.querySelector('.name').onclick=()=>editItem(sec,n);
   return row;
@@ -547,10 +566,80 @@ function updateStoreBar(){
   bar.querySelector('.spill').onclick=()=>{if(storeFilter){storeFilter='';render()}};
   bar.querySelector('select').onchange=e=>{storeFilter=e.target.value;render()};
 }
-function updateDatalist(){
-  const defaults=['Lidl','Pingo Doce','Mercadona','Continente','Auchan','Aldi','Intermarché'];
-  const custom=Object.values(state).map(x=>x.store).filter(Boolean);
-  $('#stores').innerHTML=[...new Set([...defaults,...custom])].map(x=>`<option value="${esc(x)}">`).join('');
+/* Lista de supermercados gerida pelo utilizador (prefs.stores).
+   Inclui sempre as lojas que já estão atribuídas a artigos. */
+const DEFAULT_STORES=['Lidl','Pingo Doce','Mercadona','Continente','Auchan','Aldi','Intermarché'];
+function ensureStores(){
+  if(!Array.isArray(prefs.stores))prefs.stores=[...DEFAULT_STORES];
+  const seen=new Set(),out=[];
+  for(const st of [...prefs.stores,...Object.values(state).map(x=>x.store)]){
+    if(typeof st!=='string')continue;const t=st.trim().slice(0,40);
+    if(!t||seen.has(norm(t)))continue;seen.add(norm(t));out.push(t);
+  }
+  out.sort(cmp);
+  const changed=JSON.stringify(out)!==JSON.stringify(prefs.stores);
+  prefs.stores=out;if(changed)savePrefs();
+  return out;
+}
+function findStore(name){const t=norm(name);return ensureStores().find(x=>norm(x)===t)||null}
+function addStore(name){
+  name=String(name||'').trim().slice(0,40);if(!name)return null;
+  const ex=findStore(name);if(ex)return ex;
+  name=name.charAt(0).toLocaleUpperCase('pt-PT')+name.slice(1);
+  prefs.stores.push(name);ensureStores();savePrefs();return name;
+}
+function storeUse(name){return Object.values(state).filter(x=>x.store===name).length}
+function storeOptions(cur){
+  const list=ensureStores();
+  return `<option value="">Sem supermercado</option>`+list.map(x=>`<option value="${esc(x)}"${x===cur?' selected':''}>${esc(x)}</option>`).join('')+`<option value="__add__">＋ Novo supermercado…</option>`;
+}
+function updateDatalist(){ensureStores()}
+function manageStores(){
+  openOverlay((sh,ov)=>{
+    sh.insertAdjacentHTML('beforeend',`<h2>🏪 Supermercados</h2>
+<div class="addrow"><input class="field" maxlength="40" placeholder="Novo supermercado" enterkeyhint="done" autocapitalize="words"><button class="btn primary sadd">Acrescentar</button></div>
+<div class="msg" aria-live="polite"></div>
+<div class="grp slist"></div>
+<p class="note">Os supermercados aparecem na lista de cada artigo em Planear.</p>`);
+    const inp=sh.querySelector('.field'),msg=sh.querySelector('.msg'),list=sh.querySelector('.slist');
+    const say=(t,c)=>{msg.textContent=t;msg.className='msg '+(c||'')};
+    const draw=()=>{
+      const st=ensureStores();
+      if(!st.length){list.innerHTML='<div class="empty-s">Ainda não há supermercados.</div>';return}
+      list.innerHTML=st.map((x,i)=>{const u=storeUse(x);return `<div class="srow"><span class="dot" style="background:${storeColor(x)[0]}"></span><span class="sn">${esc(x)}</span><span class="sc">${u?u+(u===1?' artigo':' artigos'):''}</span><button class="ib ren" data-i="${i}" aria-label="Renomear ${esc(x)}">✏️</button><button class="ib del" data-i="${i}" aria-label="Apagar ${esc(x)}">🗑️</button></div>`}).join('');
+      list.querySelectorAll('.ren').forEach(b=>b.onclick=()=>renameStore(st[+b.dataset.i],draw));
+      list.querySelectorAll('.del').forEach(b=>b.onclick=()=>deleteStore(st[+b.dataset.i],draw));
+    };
+    const add=()=>{
+      const v=inp.value.trim();if(!v){inp.focus();return}
+      const ex=findStore(v);
+      if(ex){say(`«${ex}» já existe.`,'bad');inp.select();return}
+      const n=addStore(v);inp.value='';say(`✓ «${n}» acrescentado.`,'good');draw();inp.focus();
+    };
+    sh.querySelector('.sadd').onclick=add;
+    inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();add()}};
+    inp.oninput=()=>{if(msg.classList.contains('bad'))say('')};
+    ov.onClose=()=>render();
+    draw();
+  });
+}
+async function renameStore(old,after){
+  const v=await askText('Renomear supermercado',old,'Nome do supermercado');
+  if(v==null)return;let name=v.trim().slice(0,40);if(!name||name===old)return;
+  name=name.charAt(0).toLocaleUpperCase('pt-PT')+name.slice(1);
+  const ex=findStore(name);if(ex&&ex!==old){toast(`«${ex}» já existe.`);return}
+  prefs.stores=prefs.stores.map(x=>x===old?name:x);
+  for(const k of Object.keys(state))if(state[k].store===old)state[k]={...state[k],store:name};
+  if(storeFilter===old)storeFilter=name;
+  savePrefs();save();ensureStores();after&&after();
+}
+function deleteStore(name,after){
+  const snapS=clone(state),snapL=[...prefs.stores],u=storeUse(name);
+  prefs.stores=prefs.stores.filter(x=>x!==name);
+  for(const k of Object.keys(state))if(state[k].store===name)setItem(...k.split('::'),{store:''});
+  if(storeFilter===name)storeFilter='';
+  savePrefs();save();after&&after();
+  toast(`«${name}» apagado${u?` (${u} ${u===1?'artigo ficou':'artigos ficaram'} sem supermercado)`:''}.`,'Desfazer',()=>{state=snapS;prefs.stores=snapL;savePrefs();save();after&&after();render()});
 }
 function compraCount(){let tot=0,done=0;for(const sec of DATA)for(const n of sec.items){const s=get(sec.category,n);if(inCompra(s)){tot++;if(s.done)done++}}return{tot,done}}
 const allDone=()=>{const c=compraCount();return c.tot>0&&c.done===c.tot};
@@ -713,7 +802,7 @@ function download(blob,name){
 const stamp=()=>new Date().toISOString().slice(0,10);
 function buildExport(kind){
   if(kind==='json'){
-    const text=JSON.stringify({version:1,app:'lista-compras',exported:new Date().toISOString(),catalog:DATA,state},null,2);
+    const text=JSON.stringify({version:1,app:'lista-compras',exported:new Date().toISOString(),catalog:DATA,state,stores:ensureStores()},null,2);
     return{text,name:`lista_compras_${stamp()}.json`,type:'application/json',ext:'.json',desc:'Cópia da lista (JSON)',label:'Cópia JSON'};
   }
   const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
@@ -781,7 +870,7 @@ function parseCSV(text){
 let sepGuess=';';
 function importText(text,fname){
   text=String(text).replace(/^﻿/,'');
-  let nextData,nextState;
+  let nextData,nextState,nextStores=null;
   if(/\.csv$/i.test(fname)||!/^\s*[{[]/.test(text)){
     const first=text.split(/\r?\n/,1)[0];sepGuess=(first.split(';').length>=first.split(',').length)?';':',';
     const rows=parseCSV(text);
@@ -799,13 +888,13 @@ function importText(text,fname){
   }else{
     let d;try{d=JSON.parse(text)}catch(_){throw new Error('O ficheiro JSON está danificado.')}
     if(!d||!Array.isArray(d.catalog))throw new Error('O JSON não é uma cópia desta lista.');
-    nextData=validCatalog(d.catalog);nextState=d.state;
+    nextData=validCatalog(d.catalog);nextState=d.state;nextStores=Array.isArray(d.stores)?d.stores.filter(x=>typeof x==='string'):null;
   }
   if(!nextData)throw new Error('O ficheiro não tem artigos válidos.');
   nextState=cleanState(nextState);
   const valid=new Set();nextData.forEach(c=>c.items.forEach(n=>valid.add(id(c.category,n))));
   for(const k of Object.keys(nextState))if(!valid.has(k))delete nextState[k];
-  return{nextData,nextState};
+  return{nextData,nextState,nextStores};
 }
 function onImportFile(e){
   const f=e.target.files[0];e.target.value='';if(!f)return;
@@ -813,11 +902,11 @@ function onImportFile(e){
   const r=new FileReader();
   r.onload=()=>{
     try{
-      const {nextData,nextState}=importText(r.result,f.name);
-      const snapD=clone(DATA),snapS=clone(state);
-      DATA=nextData;state=nextState;save();filter='all';storeFilter='';editing=false;render();
+      const {nextData,nextState,nextStores}=importText(r.result,f.name);
+      const snapD=clone(DATA),snapS=clone(state),snapL=[...ensureStores()];
+      DATA=nextData;state=nextState;if(nextStores){prefs.stores=[...prefs.stores,...nextStores];savePrefs()}save();ensureStores();filter='all';storeFilter='';editing=false;render();
       const n=nextData.reduce((a,c)=>a+c.items.length,0);
-      toast(`Importados ${n} artigos em ${nextData.length} categorias.`,'Desfazer',()=>{DATA=snapD;state=snapS;save();render()});
+      toast(`Importados ${n} artigos em ${nextData.length} categorias.`,'Desfazer',()=>{DATA=snapD;state=snapS;prefs.stores=snapL;savePrefs();save();render()});
     }catch(err){toast('Não foi possível importar: '+(err.message||'ficheiro inválido.'))}
   };
   r.onerror=()=>toast('Não foi possível ler o ficheiro.');
@@ -921,6 +1010,7 @@ function openMenu(){
     sh.insertAdjacentHTML('beforeend',`<h2>Menu</h2>
 <div class="grp">
  <label class="row"><span class="ri">👁️</span>Mostrar<select id="mFilter">${opts.map(([v,l])=>`<option value="${v}"${filter===v?' selected':''}>${l}</option>`).join('')}</select></label>
+ <button class="row" id="mStores"><span class="ri">🏪</span>Supermercados<span class="rs">${ensureStores().length}</span></button>
  <button class="row" id="mEdit"><span class="ri">✏️</span>${editing?'Terminar edição':'Editar lista e categorias'}</button>
  <button class="row" id="mShare"><span class="ri">💬</span>Partilhar lista por mensagem</button>
 </div>
@@ -934,6 +1024,7 @@ function openMenu(){
 </div>
 <p class="note">Os dados ficam só neste dispositivo · v${APP_VERSION}</p>`);
     sh.querySelector('#mFilter').onchange=e=>{filter=e.target.value;ov.close();render()};
+    sh.querySelector('#mStores').onclick=()=>{ov.close();setTimeout(manageStores,250)};
     sh.querySelector('#mEdit').onclick=()=>{ov.close();editing=!editing;if(editing&&prefs.mode!=='plan'){prefs.mode='plan';savePrefs()}filter='all';storeFilter='';$('#search').value='';render();window.scrollTo(0,0)};
     sh.querySelector('#mShare').onclick=()=>{ov.close();share()};
     sh.querySelector('#mExpJ').onclick=()=>{ov.close();setTimeout(exportJSON,250)};
@@ -957,7 +1048,7 @@ function vibrate(ms){try{navigator.vibrate&&navigator.vibrate(ms)}catch(_){}}
 /* =========================================================
    Ligações de eventos e arranque
    ========================================================= */
-const APP_VERSION='2.0.6';
+const APP_VERSION='2.1.0';
 $('#search').addEventListener('input',()=>render());
 $('#search').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#search').blur()}});
 $('#menuBtn').onclick=openMenu;
