@@ -354,7 +354,7 @@ function setCollapsed(cat,v){
 function matchesFilters(sec,n){
   const q=norm($('#search').value),s=get(sec.category,n);
   if(q&&!norm(n).includes(q))return false;
-  if(storeFilter){if(storeFilter==='__none__'){if(s.store)return false}else if(s.store!==storeFilter)return false}
+  if(storeFilter&&!(inCompra(s)&&storeMatch(s)))return false;
   if(prefs.mode==='shop'){
     if(!inCompra(s))return false;
     if(filter==='todo'&&s.done)return false;
@@ -365,7 +365,19 @@ function matchesFilters(sec,n){
   }
   return true;
 }
-function catProgress(sec){let tot=0,done=0;for(const n of sec.items){const s=get(sec.category,n);if(inCompra(s)){tot++;if(s.done)done++}}return{tot,done}}
+function storeMatch(s){if(!storeFilter)return true;if(storeFilter==='__none__')return !s.store;return s.store===storeFilter}
+const storeLabel=()=>storeFilter==='__none__'?'sem supermercado':storeFilter;
+/* Progresso da categoria: com um supermercado escolhido, conta só os artigos dessa loja. */
+function catProgress(sec){let tot=0,done=0;for(const n of sec.items){const s=get(sec.category,n);if(inCompra(s)&&storeMatch(s)){tot++;if(s.done)done++}}return{tot,done}}
+function countInfo(sec){
+  const p=catProgress(sec),all=sec.items.length;let txt,cls='count',aria;
+  if(prefs.mode==='shop'){txt=`${p.done} de ${p.tot}`;cls+=' has'+(p.tot&&p.done===p.tot?' full':'');aria=`${p.done} de ${p.tot} no carrinho`}
+  else if(storeFilter){txt=String(p.tot);cls+=' has';aria=`${p.tot} ${p.tot===1?'artigo':'artigos'} (${storeLabel()})`}
+  else if(p.tot){txt=`${p.tot} de ${all}`;cls+=' has';aria=`${p.tot} de ${all} na compra`}
+  else{txt=String(all);aria=`${all} artigos`}
+  const pct=prefs.mode==='shop'&&p.tot?Math.round(p.done/p.tot*100):0;
+  return{txt,cls,aria,pct};
+}
 
 function render(){
   const app=$('#app'),y=window.scrollY;
@@ -389,16 +401,11 @@ function renderCategory(sec){
   if(!matches.length&&!(editing&&!searching))return null;
   const box=document.createElement('section');
   box.className='category';box.dataset.cat=sec.category;
-  const closed=isCollapsed(sec.category)&&!searching;
+  const closed=isCollapsed(sec.category)&&!searching&&!storeFilter;
   if(closed)box.classList.add('closed');
-  const p=catProgress(sec);
-  let countTxt,countCls='count';
-  if(prefs.mode==='shop'){countTxt=`${p.done} de ${p.tot}`;countCls+=' has';if(p.tot&&p.done===p.tot)countCls+=' full'}
-  else if(p.tot){countTxt=`${p.tot} de ${sec.items.length}`;countCls+=' has'}
-  else countTxt=`${sec.items.length}`;
-  const pct=prefs.mode==='shop'&&p.tot?Math.round(p.done/p.tot*100):0;
+  const ci=countInfo(sec);
   const canAdd=prefs.mode==='plan'&&!editing;
-  box.innerHTML=`<div class="chwrap"><button class="cathead" aria-expanded="${!closed}"><span class="ico" aria-hidden="true">${catIcon(sec.category)}</span><span class="cname">${esc(sec.category)}</span><span class="${countCls}" aria-label="${prefs.mode==='shop'?`${p.done} de ${p.tot} no carrinho`:p.tot?`${p.tot} de ${sec.items.length} na compra`:`${sec.items.length} artigos`}">${countTxt}</span><span class="chev" aria-hidden="true">▾</span><span class="bar"><i style="width:${pct}%"></i></span></button>${canAdd?`<button class="catadd" aria-label="Adicionar artigo a ${esc(sec.category)}" title="Adicionar artigo">+</button>`:''}</div>`
+  box.innerHTML=`<div class="chwrap"><button class="cathead" aria-expanded="${!closed}"><span class="ico" aria-hidden="true">${catIcon(sec.category)}</span><span class="cname">${esc(sec.category)}</span><span class="${ci.cls}" aria-label="${esc(ci.aria)}">${ci.txt}</span><span class="chev" aria-hidden="true">▾</span><span class="bar"><i style="width:${ci.pct}%"></i></span></button>${canAdd?`<button class="catadd" aria-label="Adicionar artigo a ${esc(sec.category)}" title="Adicionar artigo">+</button>`:''}</div>`
   +`<div class="editbar"><input class="addname" placeholder="Novo artigo em ${esc(sec.category)}" enterkeyhint="done" maxlength="80"><button class="btn primary addbtn">Adicionar</button><button class="btn renc">Renomear</button><button class="btn danger delc">Apagar</button></div>`
   +`<div class="items"></div>`;
   const head=box.querySelector('.cathead');
@@ -505,12 +512,9 @@ function attachSwipe(wrap,el,onDone,onSwiped){
 }
 function updateCatHead(sec){
   const box=document.querySelector(`section.category[data-cat="${CSS.escape(sec.category)}"]`);if(!box)return;
-  const p=catProgress(sec),c=box.querySelector('.count'),bar=box.querySelector('.bar i');
-  if(prefs.mode==='shop'){c.textContent=`${p.done} de ${p.tot}`;c.className='count has'+(p.tot&&p.done===p.tot?' full':'')}
-  else if(p.tot){c.textContent=`${p.tot} de ${sec.items.length}`;c.className='count has'}
-  else{c.textContent=String(sec.items.length);c.className='count'}
-  c.setAttribute('aria-label',prefs.mode==='shop'?`${p.done} de ${p.tot} no carrinho`:p.tot?`${p.tot} de ${sec.items.length} na compra`:`${sec.items.length} artigos`);
-  bar.style.width=(prefs.mode==='shop'&&p.tot?Math.round(p.done/p.tot*100):0)+'%';
+  const ci=countInfo(sec),c=box.querySelector('.count'),bar=box.querySelector('.bar i');
+  c.textContent=ci.txt;c.className=ci.cls;c.setAttribute('aria-label',ci.aria);
+  bar.style.width=ci.pct+'%';
 }
 function emptyState(){
   const d=document.createElement('div');d.className='empty';
@@ -644,12 +648,14 @@ function deleteStore(name,after){
 function compraCount(){let tot=0,done=0;for(const sec of DATA)for(const n of sec.items){const s=get(sec.category,n);if(inCompra(s)){tot++;if(s.done)done++}}return{tot,done}}
 const allDone=()=>{const c=compraCount();return c.tot>0&&c.done===c.tot};
 function updateStatus(){
-  const {tot,done}=compraCount();
+  let tot=0,done=0;
+  for(const sec of DATA){const p=catProgress(sec);tot+=p.tot;done+=p.done}
   const lbl=$('#statusLbl'),bar=$('#statusBar');
   if(!lbl)return;
-  if(!tot)lbl.textContent='Compra vazia';
-  else if(prefs.mode==='shop')lbl.textContent=`${done} de ${tot} no carrinho`;
-  else lbl.textContent=`${tot} ${tot===1?'artigo':'artigos'} na compra`;
+  const sfx=storeFilter?` · ${storeLabel()}`:'';
+  if(!tot)lbl.textContent=storeFilter?`Nada${sfx}`:'Compra vazia';
+  else if(prefs.mode==='shop')lbl.textContent=`${done} de ${tot} no carrinho${sfx}`;
+  else lbl.textContent=`${tot} ${tot===1?'artigo':'artigos'}${storeFilter?sfx:' na compra'}`;
   bar.style.width=(tot?Math.round(done/tot*100):0)+'%';
 }
 function updateModeUI(){
@@ -1048,7 +1054,7 @@ function vibrate(ms){try{navigator.vibrate&&navigator.vibrate(ms)}catch(_){}}
 /* =========================================================
    Ligações de eventos e arranque
    ========================================================= */
-const APP_VERSION='2.1.0';
+const APP_VERSION='2.1.1';
 $('#search').addEventListener('input',()=>render());
 $('#search').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#search').blur()}});
 $('#menuBtn').onclick=openMenu;
