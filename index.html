@@ -55,12 +55,22 @@ h1{font-size:20px;margin:0;font-weight:800;letter-spacing:-.2px}
 .search:focus{box-shadow:0 0 0 3px #ffffff80}
 .iconbtn{border:0;border-radius:12px;background:#ffffff26;color:#fff;min-width:44px;min-height:44px;font-size:18px;display:grid;place-items:center;padding:0 10px}
 .iconbtn:active{background:#ffffff40}
-.storebar{display:flex;gap:6px;overflow-x:auto;padding:8px 0 0;max-width:760px;margin:0 auto;scrollbar-width:none}
-.storebar::-webkit-scrollbar{display:none}
+.storebar{display:flex;gap:8px;align-items:center;padding:8px 0 0;max-width:760px;margin:0 auto}
 .storebar:empty{display:none}
 .spill{flex:none;border:1px solid #ffffff59;background:transparent;color:#fff;border-radius:999px;padding:6px 12px;font-size:14px;font-weight:600;min-height:34px;display:flex;align-items:center;gap:6px}
 .spill[aria-pressed=true]{background:#fff;color:#0842a0;border-color:#fff}
 .spill .dot{width:10px;height:10px;border-radius:50%;flex:none;box-shadow:0 0 0 1px #0002}
+.spill .n{font-variant-numeric:tabular-nums;opacity:.85}
+.ssel{position:relative;flex:1;min-width:0;max-width:280px;display:flex;align-items:center}
+.ssel .dot{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:10px;height:10px;border-radius:50%;pointer-events:none;box-shadow:0 0 0 1px #0002}
+.ssel select{appearance:none;-webkit-appearance:none;width:100%;min-width:0;min-height:36px;border:1px solid #ffffff59;background:transparent;color:#fff;border-radius:999px;
+  padding:5px 34px 5px 14px;font-size:16px;font-weight:600;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23fff' stroke-width='2' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center}
+.ssel.has-dot select{padding-left:30px}
+.ssel.on select{background-color:#fff;color:#0842a0;border-color:#fff;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%230842a0' stroke-width='2' fill='none'/%3E%3C/svg%3E")}
+.ssel select option{color:#172033;background:#fff}
+.ssel select:focus-visible,.spill:focus-visible{outline:2px solid #fff;outline-offset:2px}
 
 /* ---------- Conteúdo ---------- */
 main{max-width:760px;margin:0 auto;padding:calc(var(--hfull,150px) + 12px) 10px calc(96px + var(--safe-b))}
@@ -493,7 +503,7 @@ function renderBanner(){
   }else if(prefs.mode==='shop'&&!prefs.swipeHintSeen&&compraCount().tot){
     el.innerHTML='<p class="swipe-hint">Dica: toca ou desliza um artigo para o pôr no carrinho.</p>';
     prefs.swipeHintSeen=true;savePrefs();
-  }else if(filter!=='all'||storeFilter){
+  }else if(filter!=='all'){
     const lbl={in:'Só os da compra',out:'Só os fora da compra',todo:'Só por comprar',done:'Só no carrinho'}[filter];
     const parts=[lbl,storeFilter?(storeFilter==='__none__'?'Sem supermercado':storeFilter):''].filter(Boolean).join(' · ');
     el.innerHTML=`<div class="banner"><span>Filtro: ${esc(parts)}</span><button>Limpar</button></div>`;
@@ -503,13 +513,21 @@ function renderBanner(){
 function updateStoreBar(){
   const bar=$('#storebar');
   const pool=Object.entries(state).filter(([,s])=>inCompra(s));
-  const stores=[...new Set(pool.map(([,s])=>s.store).filter(Boolean))].sort(cmp);
-  const noneCount=prefs.mode==='shop'?pool.filter(([,s])=>!s.store).length:0;
-  if(storeFilter&&storeFilter!=='__none__'&&!stores.includes(storeFilter))storeFilter='';
+  const counts=new Map();let none=0;
+  for(const [,st] of pool){if(st.store)counts.set(st.store,(counts.get(st.store)||0)+1);else none++}
+  const stores=[...counts.keys()].sort(cmp);
+  if(storeFilter&&storeFilter!=='__none__'&&!counts.has(storeFilter))storeFilter='';
+  if(storeFilter==='__none__'&&!none)storeFilter='';
   if(!stores.length){bar.innerHTML='';return}
-  const pill=(v,label,dot)=>`<button class="spill" data-v="${esc(v)}" aria-pressed="${storeFilter===v}">${dot?`<span class="dot" style="background:${dot}"></span>`:''}${esc(label)}</button>`;
-  bar.innerHTML=pill('','Todos')+stores.map(s=>pill(s,s,storeColor(s)[0])).join('')+(noneCount?pill('__none__','Sem loja'):'');
-  bar.querySelectorAll('.spill').forEach(b=>b.onclick=()=>{storeFilter=storeFilter===b.dataset.v?'':b.dataset.v;render()});
+  const on=!!storeFilter;
+  const dot=storeFilter&&storeFilter!=='__none__'?storeColor(storeFilter)[0]:'';
+  const opts=[`<option value=""${on?'':' selected'}>Supermercado…</option>`]
+    .concat(stores.map(st=>`<option value="${esc(st)}"${storeFilter===st?' selected':''}>${esc(st)} (${counts.get(st)})</option>`));
+  if(none)opts.push(`<option value="__none__"${storeFilter==='__none__'?' selected':''}>Sem supermercado (${none})</option>`);
+  bar.innerHTML=`<button class="spill" aria-pressed="${!on}">Todos <span class="n">(${pool.length})</span></button>`
+    +`<label class="ssel${on?' on':''}${dot?' has-dot':''}"><span class="vh">Filtrar por supermercado</span>${dot?`<span class="dot" style="background:${dot}"></span>`:''}<select>${opts.join('')}</select></label>`;
+  bar.querySelector('.spill').onclick=()=>{if(storeFilter){storeFilter='';render()}};
+  bar.querySelector('select').onchange=e=>{storeFilter=e.target.value;render()};
 }
 function updateDatalist(){
   const defaults=['Lidl','Pingo Doce','Mercadona','Continente','Auchan','Aldi','Intermarché'];
@@ -847,7 +865,7 @@ function vibrate(ms){try{navigator.vibrate&&navigator.vibrate(ms)}catch(_){}}
 /* =========================================================
    Ligações de eventos e arranque
    ========================================================= */
-const APP_VERSION='2.0.3';
+const APP_VERSION='2.0.4';
 $('#search').addEventListener('input',()=>render());
 $('#search').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#search').blur()}});
 $('#menuBtn').onclick=openMenu;
