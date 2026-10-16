@@ -212,7 +212,20 @@ footer{position:fixed;bottom:0;left:0;right:0;z-index:15;background:var(--card);
 .toast span{flex:1}
 .toast button{border:0;background:transparent;color:#8ab4f8;font-weight:800;padding:8px 10px;min-height:40px;border-radius:8px}
 @media (prefers-color-scheme:dark){.toast button{color:#0b57d0}}
-@media (max-width:400px){h1{font-size:17px;white-space:nowrap}.seg button{padding:7px 11px}}
+h1{min-width:0;flex:1}
+.listbtn{display:flex;align-items:center;gap:8px;border:0;background:transparent;color:#fff;font:inherit;font-size:inherit;font-weight:800;padding:4px 10px 4px 6px;margin-left:-6px;border-radius:12px;min-height:44px;max-width:100%;min-width:0;cursor:pointer}
+.listbtn:active{background:#ffffff26}
+#listName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.listbtn .lc{font-size:13px;opacity:.85;flex:none}
+.sheet h3.sub{font-size:13px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.4px;margin:4px 2px 8px}
+.sheet .row.on{font-weight:700;background:var(--brand-soft);color:var(--brand-ink)}
+.icons{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.icons button{width:46px;height:46px;border-radius:12px;border:1px solid var(--line);background:var(--card);font-size:22px}
+.icons button[aria-pressed=true]{border:2px solid var(--brand);background:var(--brand-soft)}
+.scope{margin-bottom:12px}
+.scope label.row{cursor:pointer}
+.scope input{width:20px;height:20px;accent-color:var(--brand);margin:0}
+@media (max-width:400px){h1{font-size:17px}.seg button{padding:7px 11px}}
 @keyframes tin{from{transform:translateY(10px);opacity:0}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -220,7 +233,7 @@ footer{position:fixed;bottom:0;left:0;right:0;z-index:15;background:var(--card);
 <body>
 <header id="hdr">
   <div class="titlebar">
-    <h1>🛒 Lista de Compras</h1>
+    <h1><button id="listBtn" class="listbtn" aria-haspopup="dialog" title="Mudar de lista"><span id="listIco" aria-hidden="true">🗓️</span><span id="listName">Mensal</span><span class="lc" aria-hidden="true">▾</span></button></h1>
     <div class="seg" role="group" aria-label="Modo">
       <button id="modePlan" aria-pressed="true">Planear</button>
       <button id="modeShop" aria-pressed="false">Comprar</button>
@@ -261,13 +274,41 @@ function readJSON(k,fb){try{const v=JSON.parse(storage.getItem(k)||'null');retur
 
 function clone(o){return JSON.parse(JSON.stringify(o))}
 let DATA=validCatalog(readJSON(CATKEY,null))||clone(DEFAULT_DATA);
-let state=cleanState(readJSON(KEY,{}));
+/* Várias listas (ex.: Mensal e Esporádica). O catálogo e os supermercados são partilhados;
+   cada lista tem as suas quantidades, lojas, marcações e, opcionalmente, um modelo. */
+const LISTSKEY='listaComprasListas_v1';
+let listSeq=0;
+const newListId=()=>'l'+Date.now().toString(36)+(listSeq++);
+function cleanTemplate(t){
+  if(!t||typeof t!=='object'||Array.isArray(t))return null;
+  const out={};
+  for(const [k,v] of Object.entries(t)){if(!k.includes('::')||!v||typeof v!=='object')continue;const qty=String(v.qty??'').slice(0,20).trim();if(!qty)continue;out[k]={qty,store:String(v.store??'').slice(0,40)}}
+  return Object.keys(out).length?out:null;
+}
+function cleanLists(d){
+  if(!d||!Array.isArray(d.lists))return null;
+  const lists=[],seen=new Set(),ids=new Set();
+  for(const l of d.lists){
+    if(!l||typeof l.name!=='string')continue;
+    const name=l.name.trim().slice(0,40);if(!name||seen.has(norm(name)))continue;seen.add(norm(name));
+    let lid=typeof l.id==='string'&&l.id?l.id.slice(0,40):newListId();if(ids.has(lid))lid=newListId();ids.add(lid);
+    lists.push({id:lid,name,icon:typeof l.icon==='string'&&l.icon.trim()?l.icon.trim().slice(0,8):'📝',state:cleanState(l.state),template:cleanTemplate(l.template)});
+  }
+  if(!lists.length)return null;
+  return{active:lists.some(l=>l.id===d.active)?d.active:lists[0].id,lists};
+}
+let LISTS=cleanLists(readJSON(LISTSKEY,null))||{active:'mensal',lists:[
+  {id:'mensal',name:'Mensal',icon:'🗓️',state:cleanState(readJSON(KEY,{})),template:null},   // a compra atual passa para a Mensal
+  {id:'esporadica',name:'Esporádica',icon:'🛍️',state:{},template:null}]};
+function activeList(){return LISTS.lists.find(l=>l.id===LISTS.active)||LISTS.lists[0]}
+let state=activeList().state;
 let prefs=Object.assign({mode:'plan',collapsed:{plan:[],shop:[]},lastBackup:0,firstRun:Date.now(),backupSnooze:0},readJSON(PREFKEY,{}));
 if(!prefs.collapsed||typeof prefs.collapsed!=='object')prefs.collapsed={plan:[],shop:[]};
 let editing=false,filter='all',storeFilter='';
 
 function save(){
-  try{storage.setItem(KEY,JSON.stringify(state));storage.setItem(CATKEY,JSON.stringify(DATA))}
+  activeList().state=state;
+  try{storage.setItem(LISTSKEY,JSON.stringify(LISTS));storage.setItem(KEY,JSON.stringify(state));storage.setItem(CATKEY,JSON.stringify(DATA))}
   catch(_){toast('Não foi possível guardar. O armazenamento pode estar cheio.')}
   updateStatus();
 }
@@ -284,6 +325,18 @@ function setItem(c,n,patch){
   save();
 }
 const inCompra=s=>String(s.qty).trim()!=='';
+
+/* Operações sobre todas as listas e modelos (o catálogo é partilhado). */
+function eachMap(fn){activeList().state=state;for(const l of LISTS.lists){fn(l.state,false);if(l.template)fn(l.template,true)}}
+function moveKey(oldK,newK){if(oldK===newK)return;eachMap(o=>{if(o[oldK]){o[newK]=o[oldK];delete o[oldK]}})}
+function dropKey(k){eachMap(o=>{delete o[k]})}
+function pruneAll(){
+  const valid=new Set();DATA.forEach(c=>c.items.forEach(n=>valid.add(id(c.category,n))));
+  eachMap(o=>{for(const k of Object.keys(o))if(!valid.has(k))delete o[k]});
+  for(const l of LISTS.lists)if(l.template&&!Object.keys(l.template).length)l.template=null;
+}
+function snapAll(){activeList().state=state;return clone({DATA,LISTS,stores:prefs.stores||[],collapsed:prefs.collapsed})}
+function restoreAll(sn){DATA=sn.DATA;LISTS=sn.LISTS;state=activeList().state;prefs.stores=sn.stores;prefs.collapsed=sn.collapsed;savePrefs();save();render()}
 
 /* Normalização para pesquisa e duplicados: sem acentos, sem maiúsculas */
 function norm(s){return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('pt-PT').trim()}
@@ -392,7 +445,7 @@ function render(){
     const b=document.createElement('button');b.className='btn ghost newcat';b.textContent='＋ Nova categoria';b.onclick=addCategory;app.appendChild(b);
   }
   if(!shown&&!editing)app.appendChild(emptyState());
-  renderBanner();updateStoreBar();updateDatalist();updateStatus();updateCollapseBtn();updateModeUI();
+  renderBanner();updateStoreBar();updateDatalist();updateStatus();updateCollapseBtn();updateModeUI();updateListBtn();
   window.scrollTo(0,y);
 }
 function renderCategory(sec){
@@ -576,7 +629,8 @@ const DEFAULT_STORES=['Lidl','Pingo Doce','Mercadona','Continente','Auchan','Ald
 function ensureStores(){
   if(!Array.isArray(prefs.stores))prefs.stores=[...DEFAULT_STORES];
   const seen=new Set(),out=[];
-  for(const st of [...prefs.stores,...Object.values(state).map(x=>x.store)]){
+  const used=[];eachMap(o=>{for(const v of Object.values(o))used.push(v.store)});
+  for(const st of [...prefs.stores,...used]){
     if(typeof st!=='string')continue;const t=st.trim().slice(0,40);
     if(!t||seen.has(norm(t)))continue;seen.add(norm(t));out.push(t);
   }
@@ -592,7 +646,7 @@ function addStore(name){
   name=name.charAt(0).toLocaleUpperCase('pt-PT')+name.slice(1);
   prefs.stores.push(name);ensureStores();savePrefs();return name;
 }
-function storeUse(name){return Object.values(state).filter(x=>x.store===name).length}
+function storeUse(name){let n=0;activeList().state=state;for(const l of LISTS.lists)for(const v of Object.values(l.state))if(v.store===name)n++;return n}
 function storeOptions(cur){
   const list=ensureStores();
   return `<option value="">Sem supermercado</option>`+list.map(x=>`<option value="${esc(x)}"${x===cur?' selected':''}>${esc(x)}</option>`).join('')+`<option value="__add__">＋ Novo supermercado…</option>`;
@@ -633,17 +687,17 @@ async function renameStore(old,after){
   name=name.charAt(0).toLocaleUpperCase('pt-PT')+name.slice(1);
   const ex=findStore(name);if(ex&&ex!==old){toast(`«${ex}» já existe.`);return}
   prefs.stores=prefs.stores.map(x=>x===old?name:x);
-  for(const k of Object.keys(state))if(state[k].store===old)state[k]={...state[k],store:name};
+  eachMap(o=>{for(const k of Object.keys(o))if(o[k].store===old)o[k]={...o[k],store:name}});
   if(storeFilter===old)storeFilter=name;
   savePrefs();save();ensureStores();after&&after();
 }
 function deleteStore(name,after){
-  const snapS=clone(state),snapL=[...prefs.stores],u=storeUse(name);
+  const snap=snapAll(),u=storeUse(name);
   prefs.stores=prefs.stores.filter(x=>x!==name);
-  for(const k of Object.keys(state))if(state[k].store===name)setItem(...k.split('::'),{store:''});
+  eachMap((o,isTpl)=>{for(const k of Object.keys(o)){if(o[k].store!==name)continue;const e={...o[k],store:''};if(!isTpl&&!e.qty&&!e.done)delete o[k];else o[k]=e}});
   if(storeFilter===name)storeFilter='';
   savePrefs();save();after&&after();
-  toast(`«${name}» apagado${u?` (${u} ${u===1?'artigo ficou':'artigos ficaram'} sem supermercado)`:''}.`,'Desfazer',()=>{state=snapS;prefs.stores=snapL;savePrefs();save();after&&after();render()});
+  toast(`«${name}» apagado${u?` (${u} ${u===1?'artigo ficou':'artigos ficaram'} sem supermercado)`:''}.`,'Desfazer',()=>{restoreAll(snap);after&&after()});
 }
 function compraCount(){let tot=0,done=0;for(const sec of DATA)for(const n of sec.items){const s=get(sec.category,n);if(inCompra(s)){tot++;if(s.done)done++}}return{tot,done}}
 const allDone=()=>{const c=compraCount();return c.tot>0&&c.done===c.tot};
@@ -719,15 +773,14 @@ function editItem(sec,n){
       if(name===n&&to===sec){ov.close();return}
       const ex=findItem(name);
       if(ex&&!(ex.sec===sec&&ex.n===n)){bad(`«${ex.n}» já existe em ${ex.sec.category}.`);inp.select();return}
-      const snapD=clone(DATA),snapS=clone(state),snapP=clone(prefs.collapsed);
-      const oldK=id(sec.category,n),entry=state[oldK];
+      const snap=snapAll();
       sec.items=sec.items.filter(x=>x!==n);
       to.items.push(name);to.items.sort(cmp);
-      delete state[oldK];if(entry)state[id(to.category,name)]=entry;
+      moveKey(id(sec.category,n),id(to.category,name));
       if(to!==sec&&isCollapsed(to.category))setCollapsed(to.category,false);
       save();ov.close();render();
       const where=to!==sec?` para ${to.category}`:'';
-      toast(to!==sec?`«${name}» movido${where}.`:`Renomeado para «${name}».`,'Desfazer',()=>{DATA=snapD;state=snapS;prefs.collapsed=snapP;savePrefs();save();render()});
+      toast(to!==sec?`«${name}» movido${where}.`:`Renomeado para «${name}».`,'Desfazer',()=>restoreAll(snap));
       setTimeout(()=>{
         const row=[...document.querySelectorAll(`section.category[data-cat="${CSS.escape(to.category)}"] .item`)].find(r=>r.querySelector('.name')?.textContent===name);
         if(row){row.classList.add('flash');if(to!==sec)row.scrollIntoView({block:'center',behavior:'smooth'})}
@@ -741,9 +794,9 @@ function editItem(sec,n){
   });
 }
 function deleteItem(sec,n){
-  const k=id(sec.category,n),prevItems=[...sec.items],prevState=state[k];
-  sec.items=sec.items.filter(x=>x!==n);delete state[k];save();rerenderCategory(sec);
-  toast(`«${n}» apagado.`,'Desfazer',()=>{sec.items=prevItems;if(prevState)state[k]=prevState;save();render()});
+  const snap=snapAll();
+  sec.items=sec.items.filter(x=>x!==n);dropKey(id(sec.category,n));save();rerenderCategory(sec);
+  toast(`«${n}» apagado.`,'Desfazer',()=>restoreAll(snap));
 }
 async function addCategory(){
   const v=await askText('Nova categoria','','Nome da categoria');
@@ -758,15 +811,15 @@ async function renameCategory(sec){
   if(!name||name===sec.category)return;
   const ex=findCat(name);if(ex&&ex!==sec){toast('Essa categoria já existe.');return}
   const old=sec.category;
-  for(const n of sec.items){const k=id(old,n);if(state[k]){state[id(name,n)]=state[k];delete state[k]}}
+  for(const n of sec.items)moveKey(id(old,n),id(name,n));
   for(const m of ['plan','shop']){const a=prefs.collapsed[m]||[];prefs.collapsed[m]=a.map(x=>x===old?name:x)}
   sec.category=name;save();savePrefs();render();
 }
 function deleteCategory(sec){
-  const snapData=clone(DATA),snapState=clone(state),idx=DATA.indexOf(sec);
-  for(const n of sec.items)delete state[id(sec.category,n)];
+  const snap=snapAll(),idx=DATA.indexOf(sec);
+  for(const n of sec.items)dropKey(id(sec.category,n));
   DATA.splice(idx,1);save();render();
-  toast(`Categoria «${sec.category}» apagada.`,'Desfazer',()=>{DATA=snapData;state=snapState;save();render()});
+  toast(`Categoria «${sec.category}» apagada.`,'Desfazer',()=>restoreAll(snap));
 }
 
 /* =========================================================
@@ -776,10 +829,36 @@ function newCompra(){
   const snap=clone(state);
   for(const k of Object.keys(state)){const s=state[k];if(s.store)state[k]={done:false,qty:'',store:s.store};else delete state[k]}
   save();filter='all';storeFilter='';render();
-  toast('Nova compra iniciada. Os supermercados ficaram guardados.','Desfazer',()=>{state=snap;save();render()});
+  toast(`Nova compra iniciada em «${activeList().name}». Os supermercados ficaram guardados.`,'Desfazer',()=>{state=snap;save();render()});
+}
+/* Modelo: as quantidades habituais de uma lista, para preencher tudo de uma vez. */
+function saveTemplate(after){
+  const a=activeList(),t={};
+  for(const [k,v] of Object.entries(state))if(inCompra(v))t[k]={qty:String(v.qty).trim(),store:v.store||''};
+  const n=Object.keys(t).length;
+  if(!n){toast(`A lista «${a.name}» está vazia. Põe artigos na compra e guarda o modelo.`);return}
+  const prev=a.template?clone(a.template):null;
+  a.template=t;save();after&&after();
+  toast(`Modelo de «${a.name}» guardado com ${n} ${n===1?'artigo':'artigos'}.`,'Desfazer',()=>{a.template=prev;save();after&&after()});
+}
+function deleteTemplate(after){
+  const a=activeList(),prev=a.template;if(!prev)return;
+  a.template=null;save();after&&after();
+  toast(`Modelo de «${a.name}» apagado.`,'Desfazer',()=>{a.template=prev;save();after&&after()});
+}
+function applyTemplate(){
+  const a=activeList(),t=a.template;if(!t)return;
+  const snap=clone(state);
+  for(const k of Object.keys(state)){const s=state[k];if(s.store)state[k]={done:false,qty:'',store:s.store};else delete state[k]}
+  const valid=new Set();DATA.forEach(c=>c.items.forEach(n=>valid.add(id(c.category,n))));
+  let n=0;
+  for(const [k,v] of Object.entries(t)){if(!valid.has(k))continue;const cur=state[k]||blank();state[k]={done:false,qty:v.qty,store:v.store||cur.store};n++}
+  save();filter='all';storeFilter='';render();window.scrollTo(0,0);
+  toast(`Nova compra em «${a.name}» com ${n} ${n===1?'artigo':'artigos'} do modelo.`,'Desfazer',()=>{state=snap;save();render()});
 }
 function buildShareText(){
-  const lines=['🛒 Lista de Compras',''];let count=0;
+  const a=activeList();
+  const lines=[`🛒 Lista de Compras — ${a.icon} ${a.name}`,''];let count=0;
   for(const sec of DATA){
     const items=[];
     for(const n of sec.items){const s=get(sec.category,n);if(inCompra(s)&&!s.done){let l='• '+n+' — '+s.qty;if(s.store)l+=' ('+s.store+')';items.push(l);count++}}
@@ -791,7 +870,7 @@ async function share(){
   const text=buildShareText();
   if(!text){toast(compraCount().tot?'Já está tudo no carrinho.':'A compra está vazia. Adiciona artigos em Planear.');return}
   try{
-    if(navigator.share){await navigator.share({title:'Lista de Compras',text});return}
+    if(navigator.share){await navigator.share({title:`Lista de Compras — ${activeList().name}`,text});return}
     await navigator.clipboard.writeText(text);toast('Lista copiada. Cola-a numa mensagem.');
   }catch(e){
     if(e&&e.name==='AbortError')return;
@@ -806,15 +885,30 @@ function download(blob,name){
   setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},4000); // o Safari precisa de tempo antes de revogar
 }
 const stamp=()=>new Date().toISOString().slice(0,10);
-function buildExport(kind){
+function slug(t){return norm(t).replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')}
+/* scope: 'all' = todas as listas; 'one' = só a lista ativa */
+function buildExport(kind,scope='all'){
+  activeList().state=state;
+  const lists=scope==='one'?[activeList()]:LISTS.lists;
+  const sfx=scope==='one'?'_'+slug(activeList().name):'';
   if(kind==='json'){
-    const text=JSON.stringify({version:1,app:'lista-compras',exported:new Date().toISOString(),catalog:DATA,state,stores:ensureStores()},null,2);
-    return{text,name:`lista_compras_${stamp()}.json`,type:'application/json',ext:'.json',desc:'Cópia da lista (JSON)',label:'Cópia JSON'};
+    const text=JSON.stringify({version:2,app:'lista-compras',exported:new Date().toISOString(),scope,active:LISTS.active,catalog:DATA,stores:ensureStores(),
+      lists:lists.map(l=>({id:l.id,name:l.name,icon:l.icon,state:l.state,template:l.template}))},null,2);
+    return{text,name:`lista_compras${sfx}_${stamp()}.json`,type:'application/json',ext:'.json',desc:'Cópia da lista (JSON)',label:'Cópia JSON'};
   }
   const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
-  const rows=[['Categoria','Artigo','Comprado','Quantidade','Supermercado']];
-  DATA.forEach(c=>c.items.forEach(n=>{const s=get(c.category,n);rows.push([c.category,n,s.done?'Sim':'Não',s.qty,s.store])}));
-  return{text:'﻿'+rows.map(r=>r.map(q).join(';')).join('\r\n'),name:`lista_compras_${stamp()}.csv`,type:'text/csv',ext:'.csv',desc:'Folha de cálculo (CSV)',label:'Ficheiro CSV'};
+  let rows;
+  if(lists.length>1){
+    rows=[['Lista','Categoria','Artigo','Comprado','Quantidade','Supermercado']];
+    const used=new Set();
+    for(const l of lists)DATA.forEach(c=>c.items.forEach(n=>{const s=l.state[id(c.category,n)];if(!s)return;used.add(id(c.category,n));rows.push([l.name,c.category,n,s.done?'Sim':'Não',s.qty,s.store])}));
+    DATA.forEach(c=>c.items.forEach(n=>{if(!used.has(id(c.category,n)))rows.push(['',c.category,n,'','',''])}));  // resto do catálogo
+  }else{
+    const st=lists[0].state;
+    rows=[['Categoria','Artigo','Comprado','Quantidade','Supermercado']];
+    DATA.forEach(c=>c.items.forEach(n=>{const s=st[id(c.category,n)]||blank();rows.push([c.category,n,s.done?'Sim':'Não',s.qty,s.store])}));
+  }
+  return{text:'﻿'+rows.map(r=>r.map(q).join(';')).join('\r\n'),name:`lista_compras${sfx}_${stamp()}.csv`,type:'text/csv',ext:'.csv',desc:'Folha de cálculo (CSV)',label:'Ficheiro CSV'};
 }
 /* Ficheiro que o menu de partilha do sistema aceita. O Chrome para Android não partilha .json,
    por isso a cópia segue como .txt (o conteúdo é o mesmo e a importação aceita-o). */
@@ -829,21 +923,31 @@ function shareableFile(ex){
   return null;
 }
 function exportFile(kind){
-  const ex=buildExport(kind);
+  const multi=LISTS.lists.length>1,a=activeList();
+  let scope='all';
+  const cur=()=>buildExport(kind,scope);
   const canPick='showSaveFilePicker' in window;
-  const shareF=shareableFile(ex);
+  const probe=shareableFile(cur());
   openOverlay((sh,ov)=>{
-    sh.insertAdjacentHTML('beforeend',`<h2>Onde queres guardar?</h2>
-<p class="note" style="text-align:left;margin:-4px 0 12px">${esc(ex.label)} · ${esc(ex.name)}</p>
+    sh.insertAdjacentHTML('beforeend',`<h2>${multi?'O que exportar e onde guardar?':'Onde queres guardar?'}</h2>
+${multi?`<div class="grp scope" role="radiogroup" aria-label="O que exportar">
+ <label class="row"><input type="radio" name="xs" value="all" checked><span>Todas as listas</span><span class="rs">${LISTS.lists.length} listas</span></label>
+ <label class="row"><input type="radio" name="xs" value="one"><span>Só ${esc(a.icon)} ${esc(a.name)}</span><span class="rs">${listCount(a)} na compra</span></label>
+</div>`:''}
+<p class="note xinfo" style="text-align:left;margin:-4px 0 12px"></p>
 <div class="grp">
  ${canPick?'<button class="row" id="xPick"><span class="ri">📁</span>Escolher pasta e nome…</button>':''}
- ${shareF?'<button class="row" id="xShare"><span class="ri">📤</span>Guardar no Drive, Ficheiros ou enviar…'+(shareF.name!==ex.name?'<span class="rs">como .txt</span>':'')+'</button>':''}
+ ${probe?'<button class="row" id="xShare"><span class="ri">📤</span>Guardar no Drive, Ficheiros ou enviar…'+(probe.name.endsWith('.txt')&&kind==='json'?'<span class="rs">como .txt</span>':'')+'</button>':''}
  <button class="row" id="xDown"><span class="ri">⬇️</span>Pasta Transferências<span class="rs">no dispositivo</span></button>
 </div>
 <div class="actions"><button class="btn ghost" id="xCancel">Cancelar</button></div>`);
+    const info=()=>{const ex=cur();sh.querySelector('.xinfo').textContent=`${ex.label} · ${ex.name}`};
+    sh.querySelectorAll('input[name=xs]').forEach(r=>r.onchange=()=>{scope=r.value;info()});
+    info();
     sh.querySelector('#xCancel').onclick=()=>ov.close();
-    sh.querySelector('#xDown').onclick=()=>{ov.close();download(new Blob([ex.text],{type:ex.type+';charset=utf-8'}),ex.name);markBackup();toast(`${ex.label} guardada em Transferências.`)};
+    sh.querySelector('#xDown').onclick=()=>{const ex=cur();ov.close();download(new Blob([ex.text],{type:ex.type+';charset=utf-8'}),ex.name);markBackup();toast(`${ex.label} guardada em Transferências.`)};
     if(canPick)sh.querySelector('#xPick').onclick=async()=>{
+      const ex=cur();
       try{
         const h=await window.showSaveFilePicker({suggestedName:ex.name,types:[{description:ex.desc,accept:{[ex.type]:[ex.ext]}}]});
         ov.close();
@@ -851,9 +955,10 @@ function exportFile(kind){
         markBackup();toast(`${ex.label} guardada.`);
       }catch(e){if(e&&e.name==='AbortError')return;ov.close();toast('Não foi possível guardar o ficheiro.')}
     };
-    if(shareF)sh.querySelector('#xShare').onclick=async()=>{
+    if(probe)sh.querySelector('#xShare').onclick=async()=>{
+      const ex=cur(),f=shareableFile(ex);
       try{
-        await navigator.share({files:[shareF],title:ex.name});
+        await navigator.share({files:[f],title:ex.name});
         ov.close();markBackup();toast(`${ex.label} enviada.`);
       }catch(e){if(e&&e.name==='AbortError')return;ov.close();toast('Não foi possível abrir o menu de partilha.')}
     };
@@ -874,33 +979,57 @@ function parseCSV(text){
   return rows;
 }
 let sepGuess=';';
+/* Formatos aceites:
+   - JSON v2 com todas as listas  -> repõe tudo (catálogo e listas)
+   - JSON v2 com uma só lista     -> junta o catálogo e acrescenta/substitui essa lista (pelo nome)
+   - JSON v1 / CSV antigo         -> repõe o catálogo e põe a compra na lista ativa
+   - CSV com coluna "Lista"       -> repõe o catálogo e as listas do ficheiro */
 function importText(text,fname){
   text=String(text).replace(/^﻿/,'');
-  let nextData,nextState,nextStores=null;
+  let data,mode,lists=null,st=null,stores=null,active=null;
   if(/\.csv$/i.test(fname)||!/^\s*[{[]/.test(text)){
     const first=text.split(/\r?\n/,1)[0];sepGuess=(first.split(';').length>=first.split(',').length)?';':',';
     const rows=parseCSV(text);
     if(rows.length<2)throw new Error('O CSV não tem linhas de dados.');
     const h=rows[0].map(x=>norm(x));
-    const ci=h.indexOf('categoria'),ai=h.indexOf('artigo'),bi=h.indexOf('comprado'),qi=h.indexOf('quantidade'),si=h.indexOf('supermercado');
+    const li=h.indexOf('lista'),ci=h.indexOf('categoria'),ai=h.indexOf('artigo'),bi=h.indexOf('comprado'),qi=h.indexOf('quantidade'),si=h.indexOf('supermercado');
     if(ci<0||ai<0)throw new Error('O CSV tem de ter as colunas Categoria e Artigo.');
-    const cats=new Map();nextState={};
+    const cats=new Map(),byList=new Map();st={};
     for(const r of rows.slice(1)){
       const c=(r[ci]||'').trim(),n=(r[ai]||'').trim();if(!c||!n)continue;
       if(!cats.has(c))cats.set(c,[]);if(!cats.get(c).includes(n))cats.get(c).push(n);
-      nextState[id(c,n)]={done:bi>=0&&/^(sim|s|yes|true|1)$/i.test((r[bi]||'').trim()),qty:qi>=0?(r[qi]||'').trim():'',store:si>=0?(r[si]||'').trim():''};
+      const e={done:bi>=0&&/^(sim|s|yes|true|1)$/i.test((r[bi]||'').trim()),qty:qi>=0?(r[qi]||'').trim():'',store:si>=0?(r[si]||'').trim():''};
+      if(li>=0){const ln=(r[li]||'').trim();if(!ln)continue;if(!byList.has(ln))byList.set(ln,{});byList.get(ln)[id(c,n)]=e}
+      else st[id(c,n)]=e;
     }
-    nextData=validCatalog([...cats].map(([category,items])=>({category,items})));
+    data=validCatalog([...cats].map(([category,items])=>({category,items})));
+    if(li>=0&&byList.size){mode='all';lists=cleanLists({lists:[...byList].map(([name,s],i)=>({name,icon:i?'🛍️':'🗓️',state:s}))}).lists}
+    else mode='legacy';
   }else{
     let d;try{d=JSON.parse(text)}catch(_){throw new Error('O ficheiro JSON está danificado.')}
     if(!d||!Array.isArray(d.catalog))throw new Error('O JSON não é uma cópia desta lista.');
-    nextData=validCatalog(d.catalog);nextState=d.state;nextStores=Array.isArray(d.stores)?d.stores.filter(x=>typeof x==='string'):null;
+    data=validCatalog(d.catalog);stores=Array.isArray(d.stores)?d.stores.filter(x=>typeof x==='string'):null;
+    if(Array.isArray(d.lists)){
+      const cl=cleanLists({lists:d.lists,active:d.active});if(!cl)throw new Error('O ficheiro não tem listas válidas.');
+      lists=cl.lists;active=cl.active;mode=d.scope==='one'?'single':'all';
+    }else{mode='legacy';st=d.state}
   }
-  if(!nextData)throw new Error('O ficheiro não tem artigos válidos.');
-  nextState=cleanState(nextState);
-  const valid=new Set();nextData.forEach(c=>c.items.forEach(n=>valid.add(id(c.category,n))));
-  for(const k of Object.keys(nextState))if(!valid.has(k))delete nextState[k];
-  return{nextData,nextState,nextStores};
+  if(!data)throw new Error('O ficheiro não tem artigos válidos.');
+  return{mode,data,lists,state:cleanState(st),stores,active};
+}
+/* Junta um catálogo importado ao atual; as chaves das listas importadas apontam para os artigos já existentes. */
+function mergeCatalog(data,maps){
+  const remap={};
+  for(const sec of data){
+    let local=findCat(sec.category);
+    if(!local){local={category:sec.category,items:[]};DATA.push(local)}
+    for(const n of sec.items){
+      const ex=findItem(n);
+      if(ex)remap[id(sec.category,n)]=id(ex.sec.category,ex.n);
+      else{local.items.push(n);local.items.sort(cmp);remap[id(sec.category,n)]=id(local.category,n)}
+    }
+  }
+  for(const o of maps)for(const k of Object.keys(o)){const nk=remap[k];if(nk&&nk!==k){o[nk]=o[k];delete o[k]}}
 }
 function onImportFile(e){
   const f=e.target.files[0];e.target.value='';if(!f)return;
@@ -908,11 +1037,34 @@ function onImportFile(e){
   const r=new FileReader();
   r.onload=()=>{
     try{
-      const {nextData,nextState,nextStores}=importText(r.result,f.name);
-      const snapD=clone(DATA),snapS=clone(state),snapL=[...ensureStores()];
-      DATA=nextData;state=nextState;if(nextStores){prefs.stores=[...prefs.stores,...nextStores];savePrefs()}save();ensureStores();filter='all';storeFilter='';editing=false;render();
-      const n=nextData.reduce((a,c)=>a+c.items.length,0);
-      toast(`Importados ${n} artigos em ${nextData.length} categorias.`,'Desfazer',()=>{DATA=snapD;state=snapS;prefs.stores=snapL;savePrefs();save();render()});
+      const imp=importText(r.result,f.name);
+      const snap=snapAll();
+      let msg;
+      if(imp.mode==='all'){
+        DATA=imp.data;
+        const keep=activeList().name;
+        LISTS={lists:imp.lists,active:imp.active||imp.lists[0].id};
+        const same=LISTS.lists.find(l=>norm(l.name)===norm(keep));if(same)LISTS.active=same.id;
+        state=activeList().state;
+        const n=DATA.reduce((a,c)=>a+c.items.length,0);
+        msg=`Importadas ${LISTS.lists.length} ${LISTS.lists.length===1?'lista':'listas'} e ${n} artigos.`;
+      }else if(imp.mode==='single'){
+        const inc=imp.lists[0];
+        mergeCatalog(imp.data,[inc.state,...(inc.template?[inc.template]:[])]);
+        activeList().state=state;
+        const ex=LISTS.lists.find(l=>norm(l.name)===norm(inc.name));
+        if(ex){ex.state=inc.state;ex.template=inc.template;ex.icon=inc.icon;LISTS.active=ex.id}
+        else{inc.id=newListId();LISTS.lists.push(inc);LISTS.active=inc.id}
+        state=activeList().state;
+        msg=`Lista «${inc.name}» importada${ex?' (substituiu a existente)':''}.`;
+      }else{
+        DATA=imp.data;state=imp.state;activeList().state=state;
+        const n=DATA.reduce((a,c)=>a+c.items.length,0);
+        msg=`Importados ${n} artigos em ${DATA.length} categorias para «${activeList().name}».`;
+      }
+      if(imp.stores){prefs.stores=[...(prefs.stores||[]),...imp.stores];savePrefs()}
+      pruneAll();save();ensureStores();filter='all';storeFilter='';editing=false;render();window.scrollTo(0,0);
+      toast(msg,'Desfazer',()=>restoreAll(snap));
     }catch(err){toast('Não foi possível importar: '+(err.message||'ficheiro inválido.'))}
   };
   r.onerror=()=>toast('Não foi possível ler o ficheiro.');
@@ -1007,6 +1159,93 @@ function askText(title,value,placeholder){
     });
   });
 }
+/* =========================================================
+   Listas: escolher, criar, renomear, apagar e modelo
+   ========================================================= */
+const LIST_ICONS=['🗓️','🛍️','📝','🏠','🎉','🏖️','🎄','🐾','👶','🍷','🧺','💊'];
+function listCount(l){return Object.values(l.state).filter(inCompra).length}
+function updateListBtn(){
+  const l=activeList();
+  $('#listIco').textContent=l.icon;$('#listName').textContent=l.name;
+  $('#listBtn').setAttribute('aria-label',`Lista ${l.name}. Mudar de lista`);
+  document.title=`${l.name} · Lista de Compras`;
+}
+function switchList(lid){
+  if(lid===LISTS.active||!LISTS.lists.some(l=>l.id===lid))return;
+  activeList().state=state;LISTS.active=lid;state=activeList().state;
+  filter='all';storeFilter='';editing=false;$('#search').value='';
+  save();render();window.scrollTo(0,0);
+}
+function listDialog(title,name,icon){
+  return new Promise(res=>{
+    let done=false;
+    openOverlay((sh,ov)=>{
+      sh.insertAdjacentHTML('beforeend',`<h2>${esc(title)}</h2>
+<label class="flbl" for="ldName">Nome</label>
+<input id="ldName" class="field" maxlength="40" value="${esc(name)}" placeholder="Ex.: Festa de anos" enterkeyhint="done" autocapitalize="sentences">
+<span class="flbl">Ícone</span>
+<div class="icons" role="group" aria-label="Ícone">${LIST_ICONS.map(i=>`<button type="button" aria-pressed="${i===icon}" data-i="${i}">${i}</button>`).join('')}</div>
+<div class="msg" aria-live="polite"></div>
+<div class="actions"><button class="btn ghost cancel">Cancelar</button><button class="btn primary ok">Guardar</button></div>`);
+      const inp=sh.querySelector('#ldName'),msg=sh.querySelector('.msg');let ic=icon;
+      sh.querySelectorAll('.icons button').forEach(b=>b.onclick=()=>{ic=b.dataset.i;sh.querySelectorAll('.icons button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)))});
+      const ok=()=>{
+        let v=inp.value.trim().slice(0,40);if(!v){msg.textContent='Escreve um nome.';msg.className='msg bad';inp.focus();return}
+        v=v.charAt(0).toLocaleUpperCase('pt-PT')+v.slice(1);
+        const clash=LISTS.lists.find(l=>norm(l.name)===norm(v)&&norm(l.name)!==norm(name));
+        if(clash){msg.textContent=`Já existe a lista «${clash.name}».`;msg.className='msg bad';inp.select();return}
+        done=true;ov.close();res({name:v,icon:ic});
+      };
+      sh.querySelector('.ok').onclick=ok;
+      sh.querySelector('.cancel').onclick=()=>ov.close();
+      inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();ok()}};
+      ov.onClose=()=>{if(!done)res(null)};
+      setTimeout(()=>{inp.focus();inp.select()},250);
+    });
+  });
+}
+function openLists(){
+  openOverlay((sh,ov)=>{
+    sh.insertAdjacentHTML('beforeend','<h2>Listas</h2><div class="lbody"></div>');
+    const body=sh.querySelector('.lbody');
+    const draw=()=>{
+      activeList().state=state;
+      const a=activeList(),tc=a.template?Object.keys(a.template).length:0;
+      body.innerHTML=`<div class="grp">${LISTS.lists.map(l=>{const c=listCount(l);return `<button class="row lrow${l.id===a.id?' on':''}" data-id="${esc(l.id)}"${l.id===a.id?' aria-current="true"':''}><span class="ri">${esc(l.icon)}</span>${esc(l.name)}<span class="rs">${c?`${c} na compra`:'vazia'}${l.id===a.id?' · ✓':''}</span></button>`}).join('')}
+<button class="row" id="lNew"><span class="ri">＋</span>Nova lista</button></div>
+<h3 class="sub">${esc(a.icon)} ${esc(a.name)}</h3>
+<div class="grp">
+ <button class="row" id="lTplSave"><span class="ri">💾</span>${tc?'Atualizar modelo com a compra atual':'Guardar compra atual como modelo'}<span class="rs">${tc?`modelo: ${tc}`:''}</span></button>
+ ${tc?`<button class="row" id="lTplUse"><span class="ri">📋</span>Nova compra a partir do modelo</button><button class="row" id="lTplDel"><span class="ri">🧹</span>Apagar modelo</button>`:''}
+ <button class="row" id="lRen"><span class="ri">✏️</span>Mudar nome e ícone</button>
+ ${LISTS.lists.length>1?'<button class="row danger" id="lDel"><span class="ri">🗑️</span>Apagar esta lista</button>':''}
+</div>
+<p class="note">O catálogo de artigos e os supermercados são comuns a todas as listas.</p>`;
+      body.querySelectorAll('.lrow').forEach(b=>b.onclick=()=>{const lid=b.dataset.id;ov.close();if(lid!==LISTS.active){switchList(lid);toast(`${activeList().icon} Lista «${activeList().name}».`)}});
+      body.querySelector('#lNew').onclick=async()=>{
+        const r=await listDialog('Nova lista','','📝');if(!r)return;
+        const l={id:newListId(),name:r.name,icon:r.icon,state:{},template:null};
+        LISTS.lists.push(l);ov.close();switchList(l.id);toast(`Lista «${l.name}» criada.`);
+      };
+      body.querySelector('#lRen').onclick=async()=>{
+        const r=await listDialog('Mudar nome e ícone',a.name,a.icon);if(!r)return;
+        a.name=r.name;a.icon=r.icon;save();updateListBtn();draw();
+      };
+      body.querySelector('#lTplSave').onclick=()=>saveTemplate(draw);
+      if(tc){
+        body.querySelector('#lTplUse').onclick=()=>{ov.close();applyTemplate()};
+        body.querySelector('#lTplDel').onclick=()=>deleteTemplate(draw);
+      }
+      if(LISTS.lists.length>1)body.querySelector('#lDel').onclick=()=>{
+        const snap=snapAll(),gone=a.name;
+        LISTS.lists=LISTS.lists.filter(l=>l!==a);LISTS.active=LISTS.lists[0].id;state=activeList().state;
+        filter='all';storeFilter='';save();ov.close();render();
+        toast(`Lista «${gone}» apagada.`,'Desfazer',()=>restoreAll(snap));
+      };
+    };
+    draw();
+  });
+}
 function openMenu(){
   openOverlay((sh,ov)=>{
     const shop=prefs.mode==='shop';
@@ -1015,6 +1254,7 @@ function openMenu(){
     const bk=days==null?'nunca':days===0?'hoje':days===1?'ontem':`há ${days} dias`;
     sh.insertAdjacentHTML('beforeend',`<h2>Menu</h2>
 <div class="grp">
+ <button class="row" id="mLists"><span class="ri">🗂️</span>Listas<span class="rs">${esc(activeList().icon)} ${esc(activeList().name)}</span></button>
  <label class="row"><span class="ri">👁️</span>Mostrar<select id="mFilter">${opts.map(([v,l])=>`<option value="${v}"${filter===v?' selected':''}>${l}</option>`).join('')}</select></label>
  <button class="row" id="mStores"><span class="ri">🏪</span>Supermercados<span class="rs">${ensureStores().length}</span></button>
  <button class="row" id="mEdit"><span class="ri">✏️</span>${editing?'Terminar edição':'Editar lista e categorias'}</button>
@@ -1026,7 +1266,8 @@ function openMenu(){
  <button class="row" id="mImp"><span class="ri">⬆️</span>Importar JSON ou CSV</button>
 </div>
 <div class="grp">
- <button class="row danger" id="mNew"><span class="ri">🔄</span>Nova compra<span class="rs">limpa quantidades e marcações</span></button>
+ ${activeList().template?'<button class="row" id="mTpl"><span class="ri">📋</span>Nova compra a partir do modelo</button>':''}
+ <button class="row danger" id="mNew"><span class="ri">🔄</span>Nova compra<span class="rs">limpa a lista ${esc(activeList().name)}</span></button>
 </div>
 <p class="note">Os dados ficam só neste dispositivo · v${APP_VERSION}</p>`);
     sh.querySelector('#mFilter').onchange=e=>{filter=e.target.value;ov.close();render()};
@@ -1037,6 +1278,8 @@ function openMenu(){
     sh.querySelector('#mExpC').onclick=()=>{ov.close();setTimeout(exportCSV,250)};
     sh.querySelector('#mImp').onclick=()=>{ov.close();$('#importFile').click()};
     sh.querySelector('#mNew').onclick=()=>{ov.close();newCompra()};
+    sh.querySelector('#mLists').onclick=()=>{ov.close();setTimeout(openLists,250)};
+    if(activeList().template)sh.querySelector('#mTpl').onclick=()=>{ov.close();applyTemplate()};
   });
 }
 function toast(msg,actionLabel,action,ms){
@@ -1054,10 +1297,11 @@ function vibrate(ms){try{navigator.vibrate&&navigator.vibrate(ms)}catch(_){}}
 /* =========================================================
    Ligações de eventos e arranque
    ========================================================= */
-const APP_VERSION='2.1.1';
+const APP_VERSION='2.2.0';
 $('#search').addEventListener('input',()=>render());
 $('#search').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#search').blur()}});
 $('#menuBtn').onclick=openMenu;
+$('#listBtn').onclick=openLists;
 $('#modePlan').onclick=()=>setMode('plan');
 $('#modeShop').onclick=()=>setMode('shop');
 $('#importFile').onchange=onImportFile;
