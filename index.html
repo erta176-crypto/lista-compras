@@ -106,6 +106,13 @@ main{max-width:760px;margin:0 auto;padding:calc(var(--hfull,150px) + 12px) 10px 
 .item.incompra{background:var(--card-2)}
 .r1{display:flex;align-items:center;gap:8px;min-height:44px}
 .r1 .name{flex:1;min-width:0;font-size:16px;overflow-wrap:anywhere}
+.r1 button.name{border:0;background:transparent;text-align:left;padding:10px 0;margin:-10px 0;border-radius:8px;color:inherit;font:inherit;font-size:16px;cursor:pointer}
+.r1 button.name:active{background:var(--brand-soft)}
+.item.incompra .r1 button.name{font-weight:650}
+.sheet .flbl{display:block;font-size:13px;font-weight:700;color:var(--mut);margin:0 0 6px}
+.sheet select.field{appearance:auto}
+.sheet .actions.split{justify-content:space-between}
+.sheet .actions .right{display:flex;gap:8px}
 .item.incompra .name{font-weight:650}
 .stepper{display:flex;align-items:center;gap:0;flex:none}
 .stepper button{width:44px;height:44px;border:1px solid var(--line);background:var(--card);border-radius:12px;font-size:22px;line-height:1;color:var(--brand-ink);font-weight:600}
@@ -415,7 +422,7 @@ function planRow(sec,n){
   const s=get(sec.category,n);
   const row=document.createElement('div');
   row.className='item'+(inCompra(s)?' incompra':'');
-  const nameEl=editing?`<button class="name" aria-label="Renomear ${esc(n)}">${esc(n)}</button>`:`<span class="name">${esc(n)}</span>`;
+  const nameEl=`<button class="name" aria-label="Editar ${esc(n)}: nome e categoria">${esc(n)}</button>`;
   const [bg]=s.store?storeColor(s.store):['var(--line)'];
   row.innerHTML=`<div class="r1">${nameEl}<div class="stepper"><button class="minus" aria-label="Menos ${esc(n)}">−</button><input class="qty" inputmode="decimal" placeholder="Qtd." value="${esc(s.qty)}" aria-label="Quantidade de ${esc(n)}" maxlength="20"><button class="plus" aria-label="Mais ${esc(n)}">+</button></div><button class="delbtn" aria-label="Apagar ${esc(n)}">×</button></div>`
   +`<div class="r2"><span class="dot" style="background:${bg}"></span><input class="store" list="stores" placeholder="Supermercado (opcional)" value="${esc(s.store)}" aria-label="Supermercado para ${esc(n)}" maxlength="40" enterkeyhint="done"></div>`;
@@ -430,7 +437,7 @@ function planRow(sec,n){
   store.onchange=()=>{updateStoreBar();updateDatalist()};
   store.onkeydown=e=>{if(e.key==='Enter')store.blur()};
   row.querySelector('.delbtn').onclick=()=>deleteItem(sec,n);
-  if(editing)row.querySelector('.name').onclick=()=>renameItem(sec,n);
+  row.querySelector('.name').onclick=()=>editItem(sec,n);
   return row;
 }
 function buyRow(sec,n){
@@ -597,14 +604,46 @@ function quickAdd(name){
   if(prefs.mode==='shop'&&filter==='done')filter='all';
   render();toast(`«${n}» adicionado à compra${ex?'':' em '+sec.category}.`);
 }
-async function renameItem(sec,n){
-  const v=await askText('Renomear artigo',n,'Nome do artigo');
-  if(v==null)return;const name=v.trim().slice(0,80);
-  if(!name||name===n)return;
-  const ex=findItem(name);if(ex&&!(ex.sec===sec&&ex.n===n)){toast(`«${ex.n}» já existe em ${ex.sec.category}.`);return}
-  sec.items=sec.items.map(x=>x===n?name:x).sort(cmp);
-  const k=id(sec.category,n);if(state[k]){state[id(sec.category,name)]=state[k];delete state[k]}
-  save();render();
+/* Tocar no nome de um artigo: mudar o nome e/ou a categoria. */
+function editItem(sec,n){
+  openOverlay((sh,ov)=>{
+    sh.insertAdjacentHTML('beforeend',`<h2>Editar artigo</h2>
+<label class="flbl" for="eiName">Nome</label>
+<input id="eiName" class="field" maxlength="80" value="${esc(n)}" enterkeyhint="done" autocapitalize="sentences">
+<label class="flbl" for="eiCat">Categoria</label>
+<select id="eiCat" class="field">${DATA.map((c,i)=>`<option value="${i}"${c===sec?' selected':''}>${catIcon(c.category)} ${esc(c.category)}</option>`).join('')}</select>
+<div class="msg" aria-live="polite"></div>
+<div class="actions split"><button class="btn danger del">Apagar</button><div class="right"><button class="btn ghost cancel">Cancelar</button><button class="btn primary save">Guardar</button></div></div>`);
+    const inp=sh.querySelector('#eiName'),sel=sh.querySelector('#eiCat'),msg=sh.querySelector('.msg');
+    const bad=t=>{msg.textContent=t;msg.className='msg bad'};
+    const doSave=()=>{
+      let name=inp.value.trim().slice(0,80);
+      if(!name){bad('Escreve um nome.');inp.focus();return}
+      name=name.charAt(0).toLocaleUpperCase('pt-PT')+name.slice(1);
+      const to=DATA[+sel.value]||sec;
+      if(name===n&&to===sec){ov.close();return}
+      const ex=findItem(name);
+      if(ex&&!(ex.sec===sec&&ex.n===n)){bad(`«${ex.n}» já existe em ${ex.sec.category}.`);inp.select();return}
+      const snapD=clone(DATA),snapS=clone(state),snapP=clone(prefs.collapsed);
+      const oldK=id(sec.category,n),entry=state[oldK];
+      sec.items=sec.items.filter(x=>x!==n);
+      to.items.push(name);to.items.sort(cmp);
+      delete state[oldK];if(entry)state[id(to.category,name)]=entry;
+      if(to!==sec&&isCollapsed(to.category))setCollapsed(to.category,false);
+      save();ov.close();render();
+      const where=to!==sec?` para ${to.category}`:'';
+      toast(to!==sec?`«${name}» movido${where}.`:`Renomeado para «${name}».`,'Desfazer',()=>{DATA=snapD;state=snapS;prefs.collapsed=snapP;savePrefs();save();render()});
+      setTimeout(()=>{
+        const row=[...document.querySelectorAll(`section.category[data-cat="${CSS.escape(to.category)}"] .item`)].find(r=>r.querySelector('.name')?.textContent===name);
+        if(row){row.classList.add('flash');if(to!==sec)row.scrollIntoView({block:'center',behavior:'smooth'})}
+      },260);
+    };
+    sh.querySelector('.save').onclick=doSave;
+    sh.querySelector('.cancel').onclick=()=>ov.close();
+    sh.querySelector('.del').onclick=()=>{ov.close();deleteItem(sec,n)};
+    inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();doSave()}};
+    inp.oninput=()=>{msg.textContent='';msg.className='msg'};
+  });
 }
 function deleteItem(sec,n){
   const k=id(sec.category,n),prevItems=[...sec.items],prevState=state[k];
@@ -918,7 +957,7 @@ function vibrate(ms){try{navigator.vibrate&&navigator.vibrate(ms)}catch(_){}}
 /* =========================================================
    Ligações de eventos e arranque
    ========================================================= */
-const APP_VERSION='2.0.5';
+const APP_VERSION='2.0.6';
 $('#search').addEventListener('input',()=>render());
 $('#search').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#search').blur()}});
 $('#menuBtn').onclick=openMenu;
