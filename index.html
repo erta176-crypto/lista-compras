@@ -78,7 +78,10 @@ main{max-width:760px;margin:0 auto;padding:calc(var(--hfull,150px) + 12px) 10px 
 .banner button{border:0;border-radius:10px;padding:8px 12px;background:var(--brand);color:#fff;font-weight:700;min-height:40px}
 @media (prefers-color-scheme:dark){.banner button{color:#0f1115}}
 .category{background:var(--card);border:1px solid var(--line);border-radius:16px;margin:0 0 10px;overflow:clip;box-shadow:var(--shadow)}
-.cathead{position:sticky;top:var(--hh);z-index:2;width:100%;border:0;background:var(--card);padding:12px 14px 13px;display:grid;grid-template-columns:auto 1fr auto auto;align-items:center;gap:10px;text-align:left;min-height:52px}
+.chwrap{position:sticky;top:var(--hh);z-index:2;display:flex;align-items:center;background:var(--card)}
+.catadd{flex:none;width:40px;height:40px;margin-right:10px;border:0;border-radius:12px;background:var(--brand-soft);color:var(--brand-ink);font-size:24px;font-weight:600;line-height:1;display:grid;place-items:center}
+.catadd:active{filter:brightness(.92)}
+.cathead{position:relative;flex:1;min-width:0;width:100%;border:0;background:var(--card);padding:12px 14px 13px;display:grid;grid-template-columns:auto 1fr auto auto;align-items:center;gap:10px;text-align:left;min-height:52px}
 .cathead .ico{font-size:20px;width:26px;text-align:center}
 .cathead .cname{font-weight:800;font-size:16px}
 .cathead .count{font-size:13px;color:var(--mut);font-weight:600;font-variant-numeric:tabular-nums}
@@ -88,6 +91,12 @@ main{max-width:760px;margin:0 auto;padding:calc(var(--hfull,150px) + 12px) 10px 
 .category.closed .chev{transform:rotate(-90deg)}
 .cathead .bar{position:absolute;left:0;right:0;bottom:0;height:3px;background:transparent}
 .cathead .bar i{display:block;height:100%;background:var(--ok);transition:width .3s}
+.sheet .chk{display:flex;align-items:center;gap:10px;margin:-2px 0 12px;font-size:15px}
+.sheet .chk input{width:22px;height:22px;accent-color:var(--brand)}
+.sheet .msg{min-height:22px;margin:-4px 0 10px;font-size:14px;font-weight:600}
+.sheet .msg.good{color:var(--ok)}.sheet .msg.bad{color:var(--danger)}
+.item.flash{animation:flash 1.4s ease-out}
+@keyframes flash{0%,30%{background:var(--brand-soft)}}
 .items{border-top:1px solid var(--line)}
 .category.closed .items,.category.closed .editbar{display:none}
 
@@ -370,11 +379,13 @@ function renderCategory(sec){
   else if(p.tot){countTxt=`${p.tot} de ${sec.items.length}`;countCls+=' has'}
   else countTxt=`${sec.items.length}`;
   const pct=prefs.mode==='shop'&&p.tot?Math.round(p.done/p.tot*100):0;
-  box.innerHTML=`<button class="cathead" aria-expanded="${!closed}"><span class="ico" aria-hidden="true">${catIcon(sec.category)}</span><span class="cname">${esc(sec.category)}</span><span class="${countCls}" aria-label="${prefs.mode==='shop'?`${p.done} de ${p.tot} no carrinho`:p.tot?`${p.tot} de ${sec.items.length} na compra`:`${sec.items.length} artigos`}">${countTxt}</span><span class="chev" aria-hidden="true">▾</span><span class="bar"><i style="width:${pct}%"></i></span></button>`
+  const canAdd=prefs.mode==='plan'&&!editing;
+  box.innerHTML=`<div class="chwrap"><button class="cathead" aria-expanded="${!closed}"><span class="ico" aria-hidden="true">${catIcon(sec.category)}</span><span class="cname">${esc(sec.category)}</span><span class="${countCls}" aria-label="${prefs.mode==='shop'?`${p.done} de ${p.tot} no carrinho`:p.tot?`${p.tot} de ${sec.items.length} na compra`:`${sec.items.length} artigos`}">${countTxt}</span><span class="chev" aria-hidden="true">▾</span><span class="bar"><i style="width:${pct}%"></i></span></button>${canAdd?`<button class="catadd" aria-label="Adicionar artigo a ${esc(sec.category)}" title="Adicionar artigo">+</button>`:''}</div>`
   +`<div class="editbar"><input class="addname" placeholder="Novo artigo em ${esc(sec.category)}" enterkeyhint="done" maxlength="80"><button class="btn primary addbtn">Adicionar</button><button class="btn renc">Renomear</button><button class="btn danger delc">Apagar</button></div>`
   +`<div class="items"></div>`;
   const head=box.querySelector('.cathead');
   head.onclick=()=>{const c=!box.classList.contains('closed');box.classList.toggle('closed',c);head.setAttribute('aria-expanded',String(!c));setCollapsed(sec.category,c);updateCollapseBtn();if(!c)scrollIntoViewIfHidden(head)};
+  if(canAdd)box.querySelector('.catadd').onclick=e=>{e.stopPropagation();openAddItem(sec)};
   const addIn=box.querySelector('.addname');
   const doAdd=()=>{const v=addIn.value.trim();if(!v)return;if(addItem(sec,v)){addIn.value='';rerenderCategory(sec);box.querySelector('.addname')?.focus()}};
   box.querySelector('.addbtn').onclick=doAdd;
@@ -805,6 +816,48 @@ let ignorePop=0;
 window.addEventListener('popstate',()=>{if(ignorePop>0){ignorePop--;return}const ov=overlays[overlays.length-1];if(ov)ov.close(true)});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&overlays.length)overlays[overlays.length-1].close()});
 
+/* "+" no cabeçalho da categoria: acrescenta artigos sem sair da categoria.
+   O painel fica aberto para acrescentar vários seguidos. */
+function openAddItem(sec){
+  openOverlay((sh,ov)=>{
+    sh.insertAdjacentHTML('beforeend',`<h2>${catIcon(sec.category)} Novo artigo em ${esc(sec.category)}</h2>
+<input class="field" maxlength="80" placeholder="Nome do artigo" enterkeyhint="done" autocapitalize="sentences">
+<label class="chk"><input type="checkbox" checked> Pôr já na compra</label>
+<div class="msg" aria-live="polite"></div>
+<div class="actions"><button class="btn ghost cancel">Fechar</button><button class="btn primary ok">Adicionar</button></div>`);
+    const inp=sh.querySelector('.field'),chk=sh.querySelector('.chk input'),msg=sh.querySelector('.msg');
+    const say=(t,cls)=>{msg.textContent=t;msg.className='msg '+cls};
+    const add=()=>{
+      let name=inp.value.trim().slice(0,80);if(!name){inp.focus();return}
+      name=name.charAt(0).toLocaleUpperCase('pt-PT')+name.slice(1);
+      const ex=findItem(name);
+      if(ex&&ex.sec!==sec){say(`«${ex.n}» já existe em ${ex.sec.category}.`,'bad');inp.select();return}
+      if(ex){
+        if(chk.checked&&!inCompra(get(sec.category,ex.n))){setItem(sec.category,ex.n,{qty:'1'});say(`✓ «${ex.n}» já existia e foi posto na compra.`,'good')}
+        else{say(`«${ex.n}» já existe nesta categoria.`,'bad');inp.select();return}
+        name=ex.n;
+      }else{
+        sec.items.push(name);sec.items.sort(cmp);
+        if(chk.checked)setItem(sec.category,name,{qty:'1'});else save();
+        say(`✓ «${name}» adicionado${chk.checked?' à compra':''}.`,'good');
+      }
+      if(isCollapsed(sec.category))setCollapsed(sec.category,false);
+      rerenderCategory(sec);
+      const row=[...document.querySelectorAll(`section.category[data-cat="${CSS.escape(sec.category)}"] .item`)].find(r=>r.querySelector('.name')?.textContent===name);
+      if(row){row.classList.add('flash')}
+      inp.value='';inp.focus();
+    };
+    sh.querySelector('.ok').onclick=add;
+    sh.querySelector('.cancel').onclick=()=>ov.close();
+    inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();add()}};
+    inp.oninput=()=>{if(msg.classList.contains('bad'))say('','')};
+    ov.onClose=()=>{
+      const row=document.querySelector(`section.category[data-cat="${CSS.escape(sec.category)}"] .item.flash`);
+      if(row)setTimeout(()=>row.scrollIntoView({block:'center',behavior:'smooth'}),260);
+    };
+    setTimeout(()=>inp.focus(),250);
+  });
+}
 function askText(title,value,placeholder){
   return new Promise(res=>{
     let done=false;
@@ -865,7 +918,7 @@ function vibrate(ms){try{navigator.vibrate&&navigator.vibrate(ms)}catch(_){}}
 /* =========================================================
    Ligações de eventos e arranque
    ========================================================= */
-const APP_VERSION='2.0.4';
+const APP_VERSION='2.0.5';
 $('#search').addEventListener('input',()=>render());
 $('#search').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#search').blur()}});
 $('#menuBtn').onclick=openMenu;
