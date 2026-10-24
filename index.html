@@ -273,6 +273,7 @@ const storage=(()=>{try{const s=window.localStorage,k='__lc_test__';s.setItem(k,
 function readJSON(k,fb){try{const v=JSON.parse(storage.getItem(k)||'null');return v??fb}catch(_){return fb}}
 
 function clone(o){return JSON.parse(JSON.stringify(o))}
+const CAT_WAS_STORED=storage.getItem(CATKEY)!==null;   // false numa instalação nova
 let DATA=validCatalog(readJSON(CATKEY,null))||clone(DEFAULT_DATA);
 /* Várias listas (ex.: Mensal e Esporádica). O catálogo e os supermercados são partilhados;
    cada lista tem as suas quantidades, lojas, marcações e, opcionalmente, um modelo. */
@@ -1297,7 +1298,7 @@ function vibrate(ms){try{navigator.vibrate&&navigator.vibrate(ms)}catch(_){}}
 /* =========================================================
    Ligações de eventos e arranque
    ========================================================= */
-const APP_VERSION='2.2.0';
+const APP_VERSION='2.3.0';
 $('#search').addEventListener('input',()=>render());
 $('#search').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#search').blur()}});
 $('#menuBtn').onclick=openMenu;
@@ -1363,6 +1364,41 @@ if('serviceWorker' in navigator&&(location.protocol==='https:'||location.hostnam
 /* Atalho do ícone (premir e manter): "Ir às compras" */
 try{const p=new URLSearchParams(location.search);if(p.get('modo')==='comprar')prefs.mode='shop';else if(p.get('modo')==='planear')prefs.mode='plan';if(p.has('modo'))history.replaceState(null,'',location.pathname)}catch(_){}
 
+/* Artigos novos vindos dos talões de outubro de 2026 (Lidl e E.Leclerc).
+   São acrescentados uma única vez ao catálogo de cada dispositivo (controlado por prefs.seedV),
+   sem repetir artigos que já existam, e sem tocar nas listas, quantidades ou marcações.
+   Para acrescentar mais artigos no futuro: junta-os aqui e aumenta SEED_VERSION. */
+const SEED_VERSION=1;
+const SEED_ITEMS=[
+  {category:'Bebidas e infusões',items:['Café','Chá de alfazema','Chá de anis estrelado','Chá de camomila','Chá de funcho','Chá de hibisco','Chá de hortelã-pimenta','Chá de lúcia-lima','Chá de tília','Infusão de ervas','Infusão de frutos do bosque','Infusão de maçã e canela']},
+  {category:'Suplementos e saúde',items:['Ashwagandha','Cartilagem de tubarão','Ginkgo biloba','Magnésio e vitamina B6','Óleo de salmão','Spirulina']},
+  {category:'Mercearia vegetariana',items:['Linguiça vegetal','Salsichas vegetais','Seitan']},
+  {category:'Mercearia',items:['Canela em pau']},
+  {category:'Limpeza e casa',items:['Sacos do lixo','Tira-nódoas']},
+  {category:'Gelados e congelados',items:['Batatas congeladas']},
+  {category:'Animais de estimação',items:['Champô para animais','Filetes para cão','Ração seca','Trinca de arroz para cão']}
+];
+function seedCatalog(){
+  if((prefs.seedV||0)>=SEED_VERSION)return;
+  let added=0;
+  for(const sec of SEED_ITEMS){
+    let local=findCat(sec.category);
+    for(const n of sec.items){
+      if(findItem(n))continue;                       // já existe, em qualquer categoria
+      if(!local){
+        local={category:sec.category,items:[]};
+        const outros=DATA.findIndex(s=>norm(s.category)==='outros');
+        if(outros>=0)DATA.splice(outros,0,local);else DATA.push(local);   // "Outros" fica sempre no fim
+      }
+      local.items.push(n);added++;
+    }
+    if(local)local.items.sort(cmp);
+  }
+  prefs.seedV=SEED_VERSION;
+  if(added){save();if(CAT_WAS_STORED)setTimeout(()=>toast(`Foram acrescentados ${added} artigos novos ao catálogo.`),900)}
+}
+
+seedCatalog();
 savePrefs();render();backupReminder();askPersist();
 </script>
 </body>
