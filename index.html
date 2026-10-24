@@ -1298,7 +1298,7 @@ function vibrate(ms){try{navigator.vibrate&&navigator.vibrate(ms)}catch(_){}}
 /* =========================================================
    Ligações de eventos e arranque
    ========================================================= */
-const APP_VERSION='2.3.0';
+const APP_VERSION='2.4.0';
 $('#search').addEventListener('input',()=>render());
 $('#search').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#search').blur()}});
 $('#menuBtn').onclick=openMenu;
@@ -1364,38 +1364,77 @@ if('serviceWorker' in navigator&&(location.protocol==='https:'||location.hostnam
 /* Atalho do ícone (premir e manter): "Ir às compras" */
 try{const p=new URLSearchParams(location.search);if(p.get('modo')==='comprar')prefs.mode='shop';else if(p.get('modo')==='planear')prefs.mode='plan';if(p.has('modo'))history.replaceState(null,'',location.pathname)}catch(_){}
 
-/* Artigos novos vindos dos talões de outubro de 2026 (Lidl e E.Leclerc).
-   São acrescentados uma única vez ao catálogo de cada dispositivo (controlado por prefs.seedV),
-   sem repetir artigos que já existam, e sem tocar nas listas, quantidades ou marcações.
-   Para acrescentar mais artigos no futuro: junta-os aqui e aumenta SEED_VERSION. */
-const SEED_VERSION=1;
-const SEED_ITEMS=[
-  {category:'Bebidas e infusões',items:['Café','Chá de alfazema','Chá de anis estrelado','Chá de camomila','Chá de funcho','Chá de hibisco','Chá de hortelã-pimenta','Chá de lúcia-lima','Chá de tília','Infusão de ervas','Infusão de frutos do bosque','Infusão de maçã e canela']},
-  {category:'Suplementos e saúde',items:['Ashwagandha','Cartilagem de tubarão','Ginkgo biloba','Magnésio e vitamina B6','Óleo de salmão','Spirulina']},
-  {category:'Mercearia vegetariana',items:['Linguiça vegetal','Salsichas vegetais','Seitan']},
-  {category:'Mercearia',items:['Canela em pau']},
-  {category:'Limpeza e casa',items:['Sacos do lixo','Tira-nódoas']},
-  {category:'Gelados e congelados',items:['Batatas congeladas']},
-  {category:'Animais de estimação',items:['Champô para animais','Filetes para cão','Ração seca','Trinca de arroz para cão']}
+/* Dados acrescentados uma única vez a cada dispositivo (controlado por prefs.seedV), sem repetir artigos que
+   já existam e sem mexer nas listas, quantidades ou marcações que já tens.
+   v1: artigos novos dos talões de outubro de 2026 (Lidl e E.Leclerc).
+   v2: lista mensal «Lista Claude», calculada com as compras dos últimos 6 meses (24/04 a 24/10/2026):
+       só entram artigos comprados em pelo menos 4 meses diferentes, e a quantidade é a média mensal.
+   Para acrescentar mais no futuro: junta uma nova entrada a SEEDS com o número seguinte. */
+const SEEDS=[
+  {v:1,items:[
+    {category:'Bebidas e infusões',items:['Café','Chá de alfazema','Chá de anis estrelado','Chá de camomila','Chá de funcho','Chá de hibisco','Chá de hortelã-pimenta','Chá de lúcia-lima','Chá de tília','Infusão de ervas','Infusão de frutos do bosque','Infusão de maçã e canela']},
+    {category:'Suplementos e saúde',items:['Ashwagandha','Cartilagem de tubarão','Ginkgo biloba','Magnésio e vitamina B6','Óleo de salmão','Spirulina']},
+    {category:'Mercearia vegetariana',items:['Linguiça vegetal','Salsichas vegetais','Seitan']},
+    {category:'Mercearia',items:['Canela em pau']},
+    {category:'Limpeza e casa',items:['Sacos do lixo','Tira-nódoas']},
+    {category:'Gelados e congelados',items:['Batatas congeladas']},
+    {category:'Animais de estimação',items:['Champô para animais','Filetes para cão','Ração seca','Trinca de arroz para cão']}
+  ]},
+  {v:2,items:[
+    {category:'Lacticínios e ovos',items:['Queijo flamengo fatiado','Queijo mozzarella ralado']},
+    {category:'Frutas e legumes',items:['Tomate cherry']},
+    {category:'Padaria e pastelaria',items:['Folhado de salsicha']}
+  ],list:{name:'Lista Claude',icon:'🧺',store:'Lidl',entries:[   // [artigo, quantidade mensal]
+    ['Iogurtes','8'],['Leite','7'],['Ovos','3'],['Queijo flamengo fatiado','5'],['Queijo mozzarella ralado','3'],
+    ['Alho','300 g'],['Banana','6 kg'],['Batata','3 kg'],['Cebola','500 g'],['Maçã','4'],['Salada','15'],['Salsa','1'],['Tomate cherry','5'],
+    ['Marinadas para frango','3'],['Peito de peru','1'],['Perna de frango','1,5 kg'],['Twists de carne','3'],
+    ['Peixe panado','1'],['Peixinhos da horta','2'],
+    ['Folhado de salsicha','2'],['Pão','10'],
+    ['Arroz','2'],['Azeitonas pretas em rodelas','2'],['Cereais','1'],['Massa','2'],['Molho','3'],
+    ['Tofu','1'],
+    ['Gelados','7'],['Mistura de cogumelos','1'],['Mistura de legumes','2'],['Pizza','3'],
+    ['Frutos secos','3'],['Cappuccino','1'],
+    ['Detergente da roupa','1'],['Guardanapos','1'],['Papel higiénico','1'],['Rolo de cozinha','1'],['Elixir bucal','1']
+  ]}}
 ];
 function seedCatalog(){
-  if((prefs.seedV||0)>=SEED_VERSION)return;
-  let added=0;
-  for(const sec of SEED_ITEMS){
-    let local=findCat(sec.category);
-    for(const n of sec.items){
-      if(findItem(n))continue;                       // já existe, em qualquer categoria
-      if(!local){
-        local={category:sec.category,items:[]};
-        const outros=DATA.findIndex(s=>norm(s.category)==='outros');
-        if(outros>=0)DATA.splice(outros,0,local);else DATA.push(local);   // "Outros" fica sempre no fim
+  const todo=SEEDS.filter(s=>s.v>(prefs.seedV||0));
+  if(!todo.length)return;
+  let added=0,listName='';
+  for(const seed of todo){
+    for(const sec of seed.items||[]){
+      let local=findCat(sec.category);
+      for(const n of sec.items){
+        if(findItem(n))continue;                       // já existe, em qualquer categoria
+        if(!local){
+          local={category:sec.category,items:[]};
+          const outros=DATA.findIndex(s=>norm(s.category)==='outros');
+          if(outros>=0)DATA.splice(outros,0,local);else DATA.push(local);   // "Outros" fica sempre no fim
+        }
+        local.items.push(n);added++;
       }
-      local.items.push(n);added++;
+      if(local)local.items.sort(cmp);
     }
-    if(local)local.items.sort(cmp);
+    const L=seed.list;
+    if(L&&!LISTS.lists.some(l=>norm(l.name)===norm(L.name))){
+      const st={},tp={};
+      for(const [name,qty] of L.entries){
+        const ex=findItem(name);if(!ex)continue;       // só entram artigos que existem no catálogo
+        const k=id(ex.sec.category,ex.n);
+        st[k]={done:false,qty,store:L.store};tp[k]={qty,store:L.store};
+      }
+      LISTS.lists.push({id:newListId(),name:L.name,icon:L.icon,state:st,template:tp});   // modelo = "Nova compra" volta a esta lista
+      listName=L.name;
+    }
   }
-  prefs.seedV=SEED_VERSION;
-  if(added){save();if(CAT_WAS_STORED)setTimeout(()=>toast(`Foram acrescentados ${added} artigos novos ao catálogo.`),900)}
+  prefs.seedV=todo[todo.length-1].v;
+  if(added||listName){
+    save();
+    if(CAT_WAS_STORED){
+      const msg=listName?`Lista «${listName}» criada. Abre o menu das listas para a ver.`:`Foram acrescentados ${added} artigos novos ao catálogo.`;
+      setTimeout(()=>toast(msg),900);
+    }
+  }
 }
 
 seedCatalog();
